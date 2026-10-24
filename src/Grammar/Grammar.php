@@ -49,7 +49,7 @@ abstract class Grammar
             );
         }
 
-        $statements = ['CREATE TABLE ' . $this->wrap($blueprint->table) . ' (' . implode(', ', $definitions) . ')'];
+        $statements = ['CREATE TABLE ' . $this->wrap($blueprint->table) . ' (' . implode(', ', $definitions) . ')' . $this->tableOptions()];
 
         foreach ($blueprint->indexes() as [$type, $columns, $name]) {
             $statements[] = sprintf(
@@ -80,6 +80,14 @@ abstract class Grammar
     abstract public function compileHasColumn(string $table, string $column): array;
 
     abstract protected function quote(string $identifier): string;
+
+    /**
+     * Appended to CREATE TABLE, e.g. " ENGINE=InnoDB".
+     */
+    protected function tableOptions(): string
+    {
+        return '';
+    }
 
     /**
      * The SQL type for a column, e.g. VARCHAR(255).

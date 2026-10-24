@@ -110,7 +110,7 @@ final class SchemaAndMigrationTest extends TestCase
         $blueprint->unique('name');
 
         $this->assertSame([
-            'CREATE TABLE `patients` (`id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, `name` VARCHAR(255) NOT NULL DEFAULT \'n/a\', `active` TINYINT(1) NOT NULL DEFAULT 0, `seen_at` DATETIME NULL, `clinic_id` BIGINT NOT NULL, FOREIGN KEY (`clinic_id`) REFERENCES `clinics` (`id`) ON DELETE SET NULL)',
+            'CREATE TABLE `patients` (`id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, `name` VARCHAR(255) NOT NULL DEFAULT \'n/a\', `active` TINYINT(1) NOT NULL DEFAULT 0, `seen_at` DATETIME NULL, `clinic_id` BIGINT NOT NULL, FOREIGN KEY (`clinic_id`) REFERENCES `clinics` (`id`) ON DELETE SET NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci',
             'CREATE UNIQUE INDEX `patients_name_unique` ON `patients` (`name`)',
         ], (new MysqlGrammar())->compileCreate($blueprint));
 

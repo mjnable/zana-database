@@ -23,6 +23,16 @@ final class MysqlGrammar extends Grammar
         return ['SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?', [$table, $column]];
     }
 
+    /**
+     * Always InnoDB: MyISAM, still the default on some servers (WAMP's
+     * MySQL and MariaDB), has no transactions or foreign keys, so the unit
+     * of work could not roll back. utf8mb4 for full Unicode.
+     */
+    protected function tableOptions(): string
+    {
+        return ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci';
+    }
+
     protected function quote(string $identifier): string
     {
         return '`' . str_replace('`', '``', $identifier) . '`';
