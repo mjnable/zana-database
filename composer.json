@@ -1,15 +1,24 @@
 {
-    "name": "zana/database",
-    "description": "Database abstraction with connections and migrations for Zana applications",
+    "name": "mj-zana/database",
+    "description": "PDO connections, query builder, schema builder, migrations and unit of work for Zana applications",
     "type": "library",
-    "keywords": ["zana", "database", "db", "pdo", "migrations"],
+    "keywords": ["zana", "database", "pdo", "query-builder", "migrations", "schema"],
     "license": "MIT",
     "require": {
-        "php": "^8.1",
-        "zana/console": "^1.0"
+        "php": "^8.5",
+        "ext-pdo": "*",
+        "mj-zana/console": "^2.0",
+        "mj-zana/core": "^2.0",
+        "mj-zana/ddd": "^2.0"
     },
     "require-dev": {
-        "phpunit/phpunit": "^10.5"
+        "phpstan/phpstan": "^2.1",
+        "phpunit/phpunit": "^11.5"
+    },
+    "suggest": {
+        "ext-pdo_sqlite": "For SQLite connections",
+        "ext-pdo_mysql": "For MySQL and MariaDB connections",
+        "ext-pdo_pgsql": "For PostgreSQL connections"
     },
     "autoload": {
         "psr-4": {
@@ -21,7 +30,20 @@
             "Zana\\Database\\Tests\\": "tests/"
         }
     },
+    "repositories": [
+        { "type": "path", "url": "../zana-container", "options": { "symlink": true, "versions": { "mj-zana/container": "2.0.0" } } },
+        { "type": "path", "url": "../zana-configuration", "options": { "symlink": true, "versions": { "mj-zana/configuration": "2.0.0" } } },
+        { "type": "path", "url": "../zana-core", "options": { "symlink": true, "versions": { "mj-zana/core": "2.0.0" } } },
+        { "type": "path", "url": "../zana-console", "options": { "symlink": true, "versions": { "mj-zana/console": "2.0.0" } } },
+        { "type": "path", "url": "../zana-ddd", "options": { "symlink": true, "versions": { "mj-zana/ddd": "2.0.0" } } }
+    ],
+    "scripts": {
+        "test": "phpunit",
+        "analyse": "phpstan analyse --memory-limit=1G"
+    },
+    "config": {
+        "sort-packages": true
+    },
     "minimum-stability": "dev",
     "prefer-stable": true
 }
-
