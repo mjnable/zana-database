@@ -13,6 +13,11 @@ final class MysqlGrammar extends Grammar
         return false;
     }
 
+    public function compileDropIndex(string $table, string $index): string
+    {
+        return 'DROP INDEX ' . $this->quote($index) . ' ON ' . $this->wrap($table);
+    }
+
     public function compileHasTable(string $table): array
     {
         return ['SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?', [$table]];

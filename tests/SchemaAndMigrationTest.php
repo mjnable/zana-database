@@ -121,6 +121,88 @@ final class SchemaAndMigrationTest extends TestCase
         $this->assertFalse((new MysqlGrammar())->supportsTransactionalDdl());
     }
 
+    public function testTablesAreAlteredInPlace(): void
+    {
+        $schema = $this->db->schema();
+        $schema->create('measurements', static function (Blueprint $t): void {
+            $t->id();
+            $t->float('bmi');
+            $t->string('legacy_code', 10)->nullable();
+            $t->index('legacy_code');
+        });
+        $this->db->table('measurements')->insert(['bmi' => 22.5, 'legacy_code' => 'A1']);
+
+        $schema->table('measurements', static function (Blueprint $t): void {
+            $t->dropIndex('measurements_legacy_code_index');
+            $t->dropColumn('legacy_code');
+            $t->uuid('patient_id')->nullable();
+            $t->string('source', 10)->default('api');
+            $t->string('external_ref', 20)->nullable()->unique();
+            $t->index('patient_id');
+        });
+
+        $this->assertFalse($schema->hasColumn('measurements', 'legacy_code'));
+        $this->assertTrue($schema->hasColumn('measurements', 'patient_id'));
+        $this->assertSame([['bmi' => 22.5, 'patient_id' => null, 'source' => 'api', 'external_ref' => null]], $this->db->select('SELECT bmi, patient_id, source, external_ref FROM measurements'), 'existing rows get null or the default');
+
+        $this->db->table('measurements')->insert(['bmi' => 30.1, 'external_ref' => 'X']);
+        try {
+            $this->db->table('measurements')->insert(['bmi' => 30.2, 'external_ref' => 'X']);
+            $this->fail('The added unique column must be unique.');
+        } catch (DatabaseException) {
+            $this->addToAssertionCount(1);
+        }
+
+        $schema->table('measurements', static fn (Blueprint $t) => $t->dropIndex('measurements_patient_id_index'));
+        $schema->table('measurements', static fn (Blueprint $t) => $t->dropColumn('patient_id', 'source'));
+        $this->assertFalse($schema->hasColumn('measurements', 'source'));
+    }
+
+    public function testAlterSqlPerGrammar(): void
+    {
+        $blueprint = new Blueprint('measurements');
+        $blueprint->dropIndex('measurements_code_index');
+        $blueprint->dropColumn('code');
+        $blueprint->uuid('patient_id')->nullable();
+        $blueprint->boolean('archived')->default(false);
+        $blueprint->index('patient_id');
+
+        $this->assertSame([
+            'DROP INDEX `measurements_code_index` ON `measurements`',
+            'ALTER TABLE `measurements` DROP COLUMN `code`',
+            'ALTER TABLE `measurements` ADD COLUMN `patient_id` CHAR(36) NULL',
+            'ALTER TABLE `measurements` ADD COLUMN `archived` TINYINT(1) NOT NULL DEFAULT 0',
+            'CREATE INDEX `measurements_patient_id_index` ON `measurements` (`patient_id`)',
+        ], (new MysqlGrammar())->compileAlter($blueprint));
+
+        $this->assertSame([
+            'DROP INDEX "measurements_code_index"',
+            'ALTER TABLE "measurements" DROP COLUMN "code"',
+            'ALTER TABLE "measurements" ADD COLUMN "patient_id" UUID NULL',
+            'ALTER TABLE "measurements" ADD COLUMN "archived" BOOLEAN NOT NULL DEFAULT FALSE',
+            'CREATE INDEX "measurements_patient_id_index" ON "measurements" ("patient_id")',
+        ], (new PostgresGrammar())->compileAlter($blueprint));
+    }
+
+    public function testAlterRefusesChangesExistingTablesCannotTake(): void
+    {
+        $this->db->schema()->create('t', static fn (Blueprint $b) => $b->id());
+
+        foreach ([
+            'must be nullable or have a default' => static fn (Blueprint $b) => $b->string('name'),
+            'primary key cannot be added' => static fn (Blueprint $b) => $b->id('second'),
+            'primary key cannot be added ' => static fn (Blueprint $b) => $b->uuid('ref')->nullable()->primary(),
+            'Foreign keys cannot be added' => static fn (Blueprint $b) => $b->foreign('x')->on('y'),
+        ] as $message => $define) {
+            try {
+                $this->db->schema()->table('t', $define);
+                $this->fail("Expected: {$message}");
+            } catch (\LogicException $e) {
+                $this->assertStringContainsString(trim($message), $e->getMessage());
+            }
+        }
+    }
+
     public function testForeignKeysNeedATable(): void
     {
         $this->expectException(\LogicException::class);

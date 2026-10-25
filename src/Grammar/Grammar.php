@@ -64,6 +64,68 @@ abstract class Grammar
         return $statements;
     }
 
+    /**
+     * Statements for Schema::table(), in this order: drop indexes, drop
+     * columns, add columns, create indexes. One change per statement, as SQLite
+     * requires.
+     *
+     * @return list<string>
+     *
+     * @throws \LogicException For changes that cannot be applied to an existing table
+     */
+    public function compileAlter(Blueprint $blueprint): array
+    {
+        if ($blueprint->declaredForeignKeys() !== []) {
+            throw new \LogicException("Foreign keys cannot be added to the existing table {$blueprint->table}.");
+        }
+
+        $table = $this->wrap($blueprint->table);
+        $statements = [];
+
+        foreach ($blueprint->droppedIndexes() as $index) {
+            $statements[] = $this->compileDropIndex($blueprint->table, $index);
+        }
+        foreach ($blueprint->droppedColumns() as $column) {
+            $statements[] = "ALTER TABLE {$table} DROP COLUMN " . $this->quote($column);
+        }
+
+        $indexes = $blueprint->indexes();
+        foreach ($blueprint->columns() as $column) {
+            $where = "{$blueprint->table}.{$column->name}";
+            if ($column->type === 'id' || $column->primary) {
+                throw new \LogicException("A primary key cannot be added to the existing table {$blueprint->table} ({$where}).");
+            }
+            if (!$column->nullable && !$column->hasDefault) {
+                throw new \LogicException("The new column {$where} must be nullable or have a default: existing rows need a value.");
+            }
+
+            // SQLite cannot add a UNIQUE column, so a unique column becomes a unique index everywhere.
+            $definition = clone $column;
+            if ($definition->unique) {
+                $definition->unique = false;
+                $indexes[] = ['unique', [$column->name], "{$blueprint->table}_{$column->name}_unique"];
+            }
+            $statements[] = "ALTER TABLE {$table} ADD COLUMN " . $this->column($definition);
+        }
+
+        foreach ($indexes as [$type, $columns, $name]) {
+            $statements[] = sprintf(
+                'CREATE %sINDEX %s ON %s (%s)',
+                $type === 'unique' ? 'UNIQUE ' : '',
+                $this->quote($name),
+                $table,
+                implode(', ', array_map($this->wrap(...), $columns))
+            );
+        }
+
+        return $statements;
+    }
+
+    public function compileDropIndex(string $table, string $index): string
+    {
+        return 'DROP INDEX ' . $this->quote($index);
+    }
+
     public function compileDrop(string $table, bool $ifExists): string
     {
         return 'DROP TABLE ' . ($ifExists ? 'IF EXISTS ' : '') . $this->wrap($table);

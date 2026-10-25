@@ -18,6 +18,12 @@ final class Blueprint
     /** @var list<array{'index'|'unique', list<string>, string}> */
     private array $indexes = [];
 
+    /** @var list<string> */
+    private array $droppedColumns = [];
+
+    /** @var list<string> */
+    private array $droppedIndexes = [];
+
     public function __construct(public readonly string $table)
     {
     }
@@ -110,6 +116,49 @@ final class Blueprint
     public function unique(string|array $columns, ?string $name = null): void
     {
         $this->addIndex('unique', (array) $columns, $name);
+    }
+
+    /**
+     * Drop columns of an existing table (Schema::table() only).
+     */
+    public function dropColumn(string ...$columns): void
+    {
+        array_push($this->droppedColumns, ...array_values($columns));
+    }
+
+    /**
+     * Drop an index of an existing table by name (Schema::table() only), e.g.
+     * "measurements_patient_id_index" for index('patient_id') on measurements.
+     */
+    public function dropIndex(string $name): void
+    {
+        $this->droppedIndexes[] = $name;
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function droppedColumns(): array
+    {
+        return $this->droppedColumns;
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function droppedIndexes(): array
+    {
+        return $this->droppedIndexes;
+    }
+
+    /**
+     * The foreign keys declared so far, without checking them (for alter validation).
+     *
+     * @return list<ForeignKeyDefinition>
+     */
+    public function declaredForeignKeys(): array
+    {
+        return $this->foreignKeys;
     }
 
     public function foreign(string $column): ForeignKeyDefinition
