@@ -31,8 +31,8 @@ final class DatabaseServiceProvider extends ServiceProvider
             ->singleton(DatabaseManager::class, static fn (ServiceResolverInterface $r): DatabaseManager => new DatabaseManager(
                 $r->get(ConfigurationInterface::class),
                 $r->get(ApplicationInterface::class)->basePath(),
-            ))
-            ->singleton(ConnectionInterface::class, static fn (ServiceResolverInterface $r): ConnectionInterface => $r->get(DatabaseManager::class)->connection())
+            ))->uses(ConfigurationInterface::class, ApplicationInterface::class)
+            ->singleton(ConnectionInterface::class, static fn (ServiceResolverInterface $r): ConnectionInterface => $r->get(DatabaseManager::class)->connection())->uses(DatabaseManager::class)
             ->scoped(UnitOfWorkInterface::class, TransactionalUnitOfWork::class)
             ->singleton(MigrationRepository::class)
             ->singleton(Migrator::class, static function (ServiceResolverInterface $r): Migrator {
@@ -43,7 +43,7 @@ final class DatabaseServiceProvider extends ServiceProvider
                 }
 
                 return new Migrator($r->get(ConnectionInterface::class), $r->get(MigrationRepository::class), $paths);
-            });
+            })->uses(ApplicationInterface::class, ConnectionInterface::class, MigrationRepository::class);
 
         foreach ([MigrateCommand::class, RollbackCommand::class, StatusCommand::class, MakeMigrationCommand::class] as $command) {
             $services->singleton($command)->tag(ConsoleKernel::TAG, $command);
