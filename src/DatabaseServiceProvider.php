@@ -9,6 +9,10 @@ use Zana\Console\ConsoleKernel;
 use Zana\Container\Contracts\ServiceCollectionInterface;
 use Zana\Container\Contracts\ServiceResolverInterface;
 use Zana\Core\ApplicationInterface;
+use Zana\Core\Inspection\ApplicationCheck;
+use Zana\Core\Inspection\InspectionSection;
+use Zana\Database\Inspection\MigrationsCheck;
+use Zana\Database\Inspection\MigrationsSection;
 use Zana\Core\ServiceProvider;
 use Zana\Database\Console\MakeMigrationCommand;
 use Zana\Database\Console\MigrateCommand;
@@ -45,9 +49,23 @@ final class DatabaseServiceProvider extends ServiceProvider
                 return new Migrator($r->get(ConnectionInterface::class), $r->get(MigrationRepository::class), $paths);
             })->uses(ApplicationInterface::class, ConnectionInterface::class, MigrationRepository::class);
 
+        $services
+            ->singleton(MigrationsSection::class, static fn (ServiceResolverInterface $r): MigrationsSection => new MigrationsSection(static fn (): Migrator => self::migrator($r)))->uses(Migrator::class)
+            ->tag(InspectionSection::TAG, MigrationsSection::class)
+            ->singleton(MigrationsCheck::class, static fn (ServiceResolverInterface $r): MigrationsCheck => new MigrationsCheck(static fn (): Migrator => self::migrator($r)))->uses(Migrator::class)
+            ->tag(ApplicationCheck::TAG, MigrationsCheck::class);
+
         foreach ([MigrateCommand::class, RollbackCommand::class, StatusCommand::class, MakeMigrationCommand::class] as $command) {
             $services->singleton($command)->tag(ConsoleKernel::TAG, $command);
         }
+    }
+
+    private static function migrator(ServiceResolverInterface $resolver): Migrator
+    {
+        $migrator = $resolver->get(Migrator::class);
+        assert($migrator instanceof Migrator);
+
+        return $migrator;
     }
 
     public function origin(): string

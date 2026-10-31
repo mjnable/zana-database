@@ -12,6 +12,7 @@ use Zana\Console\ConsoleKernel;
 use Zana\Console\ConsoleServiceProvider;
 use Zana\Container\Contracts\ServiceCollectionInterface;
 use Zana\Core\Application;
+use Zana\Core\Inspection\Severity;
 use Zana\Database\Connection;
 use Zana\Database\ConnectionFactory;
 use Zana\Database\ConnectionInterface;
@@ -19,6 +20,8 @@ use Zana\Database\DatabaseException;
 use Zana\Database\DatabaseServiceProvider;
 use Zana\Database\Grammar\MysqlGrammar;
 use Zana\Database\Grammar\PostgresGrammar;
+use Zana\Database\Inspection\MigrationsCheck;
+use Zana\Database\Inspection\MigrationsSection;
 use Zana\Database\Migration\MigrationException;
 use Zana\Database\Migration\MigrationRepository;
 use Zana\Database\Migration\Migrator;
@@ -313,6 +316,48 @@ final class SchemaAndMigrationTest extends TestCase
         $scope = $container->createScope();
         $this->assertInstanceOf(TransactionalUnitOfWork::class, $scope->get(UnitOfWorkInterface::class));
         $this->assertSame($container->get(ConnectionInterface::class), $scope->get(ConnectionInterface::class));
+    }
+
+    public function testInspectionAndChecksSeeTheMigrations(): void
+    {
+        $base = $this->directory();
+        mkdir("{$base}/config");
+        file_put_contents("{$base}/config/database.php", "<?php return ['connections' => ['main' => ['driver' => 'sqlite', 'database' => ':memory:']]];");
+        mkdir("{$base}/database/migrations", 0777, true);
+        $this->migration("{$base}/database/migrations", '2026_01_01_000000_create_patients', 'patients');
+        $app = Application::configure($base)->withProviders(DatabaseServiceProvider::class)->build();
+        $section = $app->container()->get(MigrationsSection::class);
+        $check = $app->container()->get(MigrationsCheck::class);
+        assert($section instanceof MigrationsSection && $check instanceof MigrationsCheck);
+
+        $this->assertSame([['migration' => '2026_01_01_000000_create_patients', 'ran' => false, 'batch' => null]], $section->inspect($app));
+        $findings = $check->findings($app);
+        $this->assertSame(['database.pending', Severity::Warning, 'Run: php bin/console migrate'], [$findings[0]->id, $findings[0]->severity, $findings[0]->hint]);
+
+        $migrator = $app->container()->get(Migrator::class);
+        assert($migrator instanceof Migrator);
+        $migrator->migrate();
+        $afterMigrating = $check->findings($app);
+        $this->assertSame([], $afterMigrating);
+
+        unlink("{$base}/database/migrations/2026_01_01_000000_create_patients.php");
+        $afterDeletion = $check->findings($app);
+        $this->assertSame('database.missing_file', $afterDeletion[0]->id);
+    }
+
+    public function testAnUnreachableDatabaseIsAnError(): void
+    {
+        $base = $this->directory();
+        mkdir("{$base}/config");
+        file_put_contents("{$base}/config/database.php", "<?php return ['connections' => ['main' => ['driver' => 'sqlite', 'database' => " . var_export("{$base}/missing/folder/app.sqlite", true) . "]]];");
+        $app = Application::configure($base)->withProviders(DatabaseServiceProvider::class)->build();
+        $check = $app->container()->get(MigrationsCheck::class);
+        assert($check instanceof MigrationsCheck);
+
+        $findings = $check->findings($app);
+
+        $this->assertSame(['database.migrations', Severity::Error], [$findings[0]->id, $findings[0]->severity]);
+        $this->assertStringStartsWith('The migrations cannot be checked: ', $findings[0]->message);
     }
 
     /**

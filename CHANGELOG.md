@@ -3,6 +3,17 @@
 All Zana packages share one version number and are released together. A release that did
 not change this package is not listed.
 
+## 2.7.0 — 2026-10-31
+
+### Added
+
+- A `migrations` section for `inspect`, and a check for pending migrations and applied migrations
+  whose file is missing. The check connects only when it runs.
+
+### Changed
+
+- Requires `mj-zana/core` ^2.7.
+
 ## 2.4.0 — 2026-10-26
 
 ### Changed
