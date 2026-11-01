@@ -3,6 +3,14 @@
 All Zana packages share one version number and are released together. A release that did
 not change this package is not listed.
 
+## 2.11.0 — 2026-11-01
+
+### Changed
+
+- The pending-migrations hint names the application's console script, e.g. `php bin/zana migrate`
+  (FE-54).
+- Requires `mj-zana/core` ^2.11.
+
 ## 2.7.0 — 2026-10-31
 
 ### Added

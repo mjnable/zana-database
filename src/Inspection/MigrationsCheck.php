@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Zana\Database\Inspection;
 
 use Zana\Core\ApplicationInterface;
+use Zana\Core\ConsoleScript;
 use Zana\Core\Inspection\ApplicationCheck;
 use Zana\Core\Inspection\Finding;
 use Zana\Core\Inspection\Severity;
@@ -37,7 +38,7 @@ final readonly class MigrationsCheck implements ApplicationCheck
         $findings = [];
         foreach ($status as $migration) {
             if (!$migration['ran']) {
-                $findings[] = new Finding('database.pending', Severity::Warning, "Migration {$migration['migration']} has not run.", $files[$migration['migration']] ?? null, hint: 'Run: php bin/console migrate');
+                $findings[] = new Finding('database.pending', Severity::Warning, "Migration {$migration['migration']} has not run.", $files[$migration['migration']] ?? null, hint: 'Run ' . ConsoleScript::command('migrate') . '.');
             } elseif (!isset($files[$migration['migration']])) {
                 $findings[] = new Finding('database.missing_file', Severity::Warning, "Migration {$migration['migration']} ran, but its file is gone.", hint: 'Restore the file, or the next rollback cannot undo it.');
             }

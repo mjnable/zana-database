@@ -332,7 +332,7 @@ final class SchemaAndMigrationTest extends TestCase
 
         $this->assertSame([['migration' => '2026_01_01_000000_create_patients', 'ran' => false, 'batch' => null]], $section->inspect($app));
         $findings = $check->findings($app);
-        $this->assertSame(['database.pending', Severity::Warning, 'Run: php bin/console migrate'], [$findings[0]->id, $findings[0]->severity, $findings[0]->hint]);
+        $this->assertSame(['database.pending', Severity::Warning, 'Run the console command `migrate`.'], [$findings[0]->id, $findings[0]->severity, $findings[0]->hint]);
 
         $migrator = $app->container()->get(Migrator::class);
         assert($migrator instanceof Migrator);
