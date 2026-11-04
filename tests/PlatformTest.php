@@ -170,18 +170,24 @@ final class PlatformTest extends TestCase
         });
         $db->table('counters')->insert(['capacity' => 25]);
 
-        // Four buyer processes try 15 reservations each, at the same time, for 25 seats.
+        // Four buyer processes try 15 reservations each, at the same time, for 25 seats. They get the
+        // driver's extension when this run loaded it on the command line (php -d extension=pdo_pgsql).
+        $php = [PHP_BINARY, '-d', 'xdebug.mode=off'];
+        exec(escapeshellarg(PHP_BINARY) . " -r \"echo extension_loaded('pdo_{$driver}') ? 1 : 0;\"", $loaded);
+        if ($driver !== 'sqlite' && ($loaded[0] ?? '1') === '0') {
+            array_push($php, '-d', "extension=pdo_{$driver}");
+        }
         $workers = [];
         foreach (range(1, 4) as $_) {
-            $worker = proc_open([PHP_BINARY, '-d', 'xdebug.mode=off', __DIR__ . '/reserve-worker.php', json_encode($settings, JSON_THROW_ON_ERROR), '15'], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes[]);
+            $worker = proc_open([...$php, __DIR__ . '/reserve-worker.php', json_encode($settings, JSON_THROW_ON_ERROR), '15'], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes[]);
             $this->assertIsResource($worker, 'a buyer process starts');
             $workers[] = $worker;
         }
         $won = 0;
         foreach ($workers as $i => $worker) {
-            $output = stream_get_contents($pipes[$i][1]);
-            $errors = stream_get_contents($pipes[$i][2]);
-            $this->assertSame(0, proc_close($worker), (string) $errors);
+            $output = (string) stream_get_contents($pipes[$i][1]);
+            $errors = (string) stream_get_contents($pipes[$i][2]);
+            $this->assertSame(0, proc_close($worker), "{$output}\n{$errors}");
             $won += (int) $output;
         }
 
