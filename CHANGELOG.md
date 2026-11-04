@@ -3,6 +3,32 @@
 All Zana packages share one version number and are released together. A release that did
 not change this package is not listed.
 
+## 2.12.0 — unreleased
+
+### Added
+
+- `DbalConnection`: the connection on Doctrine DBAL (`doctrine/dbal` ^4.4), which
+  `ConnectionFactory::create()` and `DatabaseServiceProvider` now return; `dbal()` gives the DBAL
+  connection to integrations that must share it (FE-60, ADR-027).
+- `PlatformGrammar`: DBAL's platform and schema tools behind `Grammar`, so the query and schema builders
+  keep their API and guard rails. `ALTER` compares the introspected table with the changed one, and DBAL
+  rebuilds SQLite tables where needed.
+- Builder methods: `increment()`, `decrement()`, `whereColumn()` (with an offset, for
+  `sold <= capacity - 3`), `lockForUpdate()` and `upsert()`.
+- `DatabaseException::isRetryable()` for deadlocks and lock wait timeouts.
+- Platform tests on SQLite, and on MySQL and PostgreSQL when they answer (`ZANA_TEST_MYSQL_*`,
+  `ZANA_TEST_PGSQL_*`), including concurrent buyers who never oversell one counter row.
+
+### Changed
+
+- `ConnectionFactory::create()` is declared to return `ConnectionInterface` (a `DbalConnection`).
+- MySQL counts changed rows, not matched rows, in the affected row count.
+
+### Deprecated
+
+- `Connection` (PDO), `MysqlGrammar`, `PostgresGrammar`, `SqliteGrammar` and the new
+  `ConnectionFactory::createPdo()`, which keeps the 2.11 connection; all go in 3.0.
+
 ## 2.11.0 — 2026-11-01
 
 ### Changed

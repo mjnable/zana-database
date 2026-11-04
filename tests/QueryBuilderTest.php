@@ -7,13 +7,14 @@ namespace Zana\Database\Tests;
 use PHPUnit\Framework\TestCase;
 use Zana\Database\Connection;
 use Zana\Database\ConnectionFactory;
+use Zana\Database\ConnectionInterface;
 use Zana\Database\DatabaseException;
 use Zana\Database\Grammar\MysqlGrammar;
 use Zana\Database\Grammar\PostgresGrammar;
 
 final class QueryBuilderTest extends TestCase
 {
-    private Connection $db;
+    private ConnectionInterface $db;
 
     protected function setUp(): void
     {

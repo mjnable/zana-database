@@ -31,7 +31,7 @@ use Zana\Ddd\Domain\UnitOfWorkInterface;
 
 final class SchemaAndMigrationTest extends TestCase
 {
-    private Connection $db;
+    private ConnectionInterface $db;
 
     /** @var list<string> */
     private array $directories = [];

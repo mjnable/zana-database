@@ -6,8 +6,18 @@ namespace Zana\Database\Grammar;
 
 use Zana\Database\Schema\ColumnDefinition;
 
+/**
+ * SQLite SQL for the PDO Connection.
+ *
+ * @deprecated since 2.12: DbalConnection uses PlatformGrammar (ADR-027); this class goes in 3.0.
+ */
 final class SqliteGrammar extends Grammar
 {
+    public function compileLockForUpdate(): string
+    {
+        return '';   // SQLite has no row locks; a write transaction holds the database
+    }
+
     public function compileHasTable(string $table): array
     {
         return ["SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", [$table]];

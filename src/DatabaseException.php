@@ -18,4 +18,12 @@ class DatabaseException extends \RuntimeException
 
         return $exception;
     }
+
+    /**
+     * True for a deadlock or a lock wait timeout (ADR-027): running the transaction again can succeed.
+     */
+    public function isRetryable(): bool
+    {
+        return $this->getPrevious() instanceof \Doctrine\DBAL\Exception\RetryableException;
+    }
 }

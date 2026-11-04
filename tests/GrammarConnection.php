@@ -16,7 +16,7 @@ use Zana\Database\Schema\Schema;
  */
 final readonly class GrammarConnection implements ConnectionInterface
 {
-    public function __construct(private Connection $inner, private Grammar $grammar)
+    public function __construct(private ConnectionInterface $inner, private Grammar $grammar)
     {
     }
 

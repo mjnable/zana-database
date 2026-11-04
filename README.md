@@ -90,6 +90,37 @@ a failure there leaves the earlier migrations applied.
 `UnitOfWorkInterface` (from `mj-zana/ddd`) resolves, per scope, to a
 `TransactionalUnitOfWork` on the default connection.
 
+## New in 2.12: on Doctrine DBAL
+
+The connection runs on [Doctrine DBAL](https://www.doctrine-project.org/projects/dbal.html)
+(ADR-027). The query and schema builders keep their API and their guard
+rails; DBAL compiles them for the database, and `DbalConnection::dbal()`
+gives its connection to integrations that must share it.
+
+```php
+// Reserve 3 seats only while sold + 3 <= capacity: one statement, safe under concurrency.
+$won = $db->table('ticket_types')->where('id', $id)->whereColumn('sold', '<=', 'capacity', -3)->increment('sold', 3);
+
+$db->table('rates')->upsert(['currency' => 'CDF', 'rate' => 2850], uniqueBy: 'currency');   // insert, or update rate
+$row = $db->transaction(fn ($tx) => $tx->table('orders')->where('id', $id)->lockForUpdate()->first());
+```
+
+- `increment()` and `decrement()` change a column relative to itself, with
+  other columns in the same statement; like `update()`, they need a where
+  clause.
+- `whereColumn($first, $operator, $second, $offset)` compares two columns.
+- `upsert($rows, $uniqueBy, $update)`: `ON CONFLICT` on PostgreSQL and
+  SQLite, `ON DUPLICATE KEY UPDATE` on MySQL, where any unique key of the
+  table detects the conflict.
+- `lockForUpdate()` adds `FOR UPDATE`; SQLite has no row locks.
+- `DatabaseException::isRetryable()` is true for a deadlock or a lock wait
+  timeout.
+- **MySQL counts changed rows**, not matched ones: an update that writes the
+  values a row already has returns 0.
+
+`Connection` (PDO), its grammars and `ConnectionFactory::createPdo()` are
+deprecated and go in 3.0.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

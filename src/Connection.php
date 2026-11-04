@@ -13,6 +13,8 @@ use Zana\Database\Schema\Schema;
 
 /**
  * A PDO connection. Nested transactions use savepoints.
+ *
+ * @deprecated since 2.12: ConnectionFactory::create() returns a DbalConnection (ADR-027); this class goes in 3.0.
  */
 final class Connection implements ConnectionInterface
 {

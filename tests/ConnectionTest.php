@@ -15,7 +15,7 @@ use Zana\Database\TransactionalUnitOfWork;
 
 final class ConnectionTest extends TestCase
 {
-    private Connection $db;
+    private ConnectionInterface $db;
 
     protected function setUp(): void
     {

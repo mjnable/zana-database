@@ -35,6 +35,8 @@ final class QueryBuilder
 
     private ?int $offset = null;
 
+    private bool $lockForUpdate = false;
+
     public function __construct(
         private readonly ConnectionInterface $connection,
         private readonly string $table,
@@ -98,6 +100,24 @@ final class QueryBuilder
     public function whereNotNull(string $column): self
     {
         $this->wheres[] = ['boolean' => 'AND', 'sql' => $this->wrap($column) . ' IS NOT NULL', 'bindings' => []];
+
+        return $this;
+    }
+
+    /**
+     * Compare two columns of the row (2.12), the second shifted by $offset:
+     * whereColumn('sold', '<=', 'capacity', -3) is "sold <= capacity - 3".
+     */
+    public function whereColumn(string $first, string $operator, string $second, int|float $offset = 0): self
+    {
+        $operator = strtoupper($operator);
+        $this->assertOperator($operator);
+        $sql = $this->wrap($first) . " {$operator} " . $this->wrap($second);
+        if ($offset == 0) {
+            $this->wheres[] = ['boolean' => 'AND', 'sql' => $sql, 'bindings' => []];
+        } else {
+            $this->wheres[] = ['boolean' => 'AND', 'sql' => $sql . ($offset > 0 ? ' + ?' : ' - ?'), 'bindings' => [abs($offset)]];
+        }
 
         return $this;
     }
@@ -264,6 +284,80 @@ final class QueryBuilder
     }
 
     /**
+     * Add $amount to a column, relative to its current value, in one statement (2.12): with a where
+     * clause such as whereColumn('sold', '<=', 'capacity', -$quantity), a conditional reservation
+     * that two buyers cannot both win. Returns the affected row count.
+     *
+     * @param array<string, mixed> $values Other columns to set in the same statement
+     * @param bool $force Allow updating every row (no where clause)
+     */
+    public function increment(string $column, int|float $amount = 1, array $values = [], bool $force = false): int
+    {
+        $this->assertFiltered('update', $force);
+
+        $sets = [$this->wrap($column) . ' = ' . $this->wrap($column) . ' + ?'];
+        $bindings = [$amount];
+        foreach ($values as $name => $value) {
+            $sets[] = $this->wrap($name) . ' = ?';
+            $bindings[] = $value;
+        }
+
+        [$where, $whereBindings] = $this->compileWheres();
+
+        return $this->connection->execute('UPDATE ' . $this->wrap($this->table) . ' SET ' . implode(', ', $sets) . $where, [...$bindings, ...$whereBindings]);
+    }
+
+    /**
+     * @param array<string, mixed> $values
+     */
+    public function decrement(string $column, int|float $amount = 1, array $values = [], bool $force = false): int
+    {
+        return $this->increment($column, -$amount, $values, $force);
+    }
+
+    /**
+     * Insert rows, or update the rows they conflict with on the unique key $uniqueBy (2.12). $update
+     * names the columns to overwrite; by default every inserted column except $uniqueBy; [] leaves a
+     * conflicting row as it is. On MySQL the conflict is detected on any unique key of the table.
+     *
+     * @param array<string, mixed>|list<array<string, mixed>> $values
+     * @param string|list<string> $uniqueBy
+     * @param list<string>|null $update
+     */
+    public function upsert(array $values, string|array $uniqueBy, ?array $update = null): int
+    {
+        if ($values === []) {
+            return 0;
+        }
+
+        /** @var list<array<string, mixed>> $rows */
+        $rows = array_is_list($values) ? $values : [$values];
+        $columns = array_keys($rows[0]);
+        $bindings = [];
+        foreach ($rows as $row) {
+            if (array_keys($row) !== $columns) {
+                throw new DatabaseException('Every upserted row must have the same columns in the same order.');
+            }
+            array_push($bindings, ...array_values($row));
+        }
+        $uniqueBy = (array) $uniqueBy;
+        $update ??= array_values(array_diff($columns, $uniqueBy));
+
+        return $this->connection->execute($this->connection->grammar()->compileUpsert($this->table, $columns, count($rows), $uniqueBy, $update), $bindings);
+    }
+
+    /**
+     * Lock the selected rows until the transaction ends (2.12): SELECT … FOR UPDATE. SQLite has no row
+     * locks; its write transactions serialize instead.
+     */
+    public function lockForUpdate(): self
+    {
+        $this->lockForUpdate = true;
+
+        return $this;
+    }
+
+    /**
      * @param bool $force Allow deleting every row (no where clause)
      */
     public function delete(bool $force = false): int
@@ -297,11 +391,9 @@ final class QueryBuilder
         if ($this->orders !== []) {
             $sql .= ' ORDER BY ' . implode(', ', $this->orders);
         }
-        if ($this->limit !== null) {
-            $sql .= ' LIMIT ' . $this->limit;
-        }
-        if ($this->offset !== null) {
-            $sql .= ($this->limit === null ? ' LIMIT ' . PHP_INT_MAX : '') . ' OFFSET ' . $this->offset;
+        $sql = $this->connection->grammar()->compileLimit($sql, $this->limit, $this->offset);
+        if ($this->lockForUpdate) {
+            $sql .= $this->connection->grammar()->compileLockForUpdate();
         }
 
         return [$sql, $bindings];

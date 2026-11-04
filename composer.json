@@ -7,6 +7,7 @@
     "require": {
         "php": "^8.5",
         "ext-pdo": "*",
+        "doctrine/dbal": "^4.4",
         "mj-zana/console": "^2.0",
         "mj-zana/core": "^2.11",
         "mj-zana/ddd": "^2.0"

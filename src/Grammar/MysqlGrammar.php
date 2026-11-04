@@ -6,11 +6,21 @@ namespace Zana\Database\Grammar;
 
 use Zana\Database\Schema\ColumnDefinition;
 
+/**
+ * MySQL SQL for the PDO Connection.
+ *
+ * @deprecated since 2.12: DbalConnection uses PlatformGrammar (ADR-027); this class goes in 3.0.
+ */
 final class MysqlGrammar extends Grammar
 {
     public function supportsTransactionalDdl(): bool
     {
         return false;
+    }
+
+    public function compileUpsert(string $table, array $columns, int $rows, array $uniqueBy, array $update): string
+    {
+        return $this->compileOnDuplicateKeyUpsert($table, $columns, $rows, $uniqueBy, $update);
     }
 
     public function compileDropIndex(string $table, string $index): string

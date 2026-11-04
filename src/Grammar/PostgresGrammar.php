@@ -6,6 +6,11 @@ namespace Zana\Database\Grammar;
 
 use Zana\Database\Schema\ColumnDefinition;
 
+/**
+ * PostgreSQL SQL for the PDO Connection.
+ *
+ * @deprecated since 2.12: DbalConnection uses PlatformGrammar (ADR-027); this class goes in 3.0.
+ */
 final class PostgresGrammar extends Grammar
 {
     public function compileHasTable(string $table): array

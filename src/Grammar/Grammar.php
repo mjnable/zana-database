@@ -8,10 +8,79 @@ use Zana\Database\Schema\Blueprint;
 use Zana\Database\Schema\ColumnDefinition;
 
 /**
- * Driver-specific SQL: identifier quoting and DDL.
+ * Driver-specific SQL: identifier quoting, limits, row locks, upserts and DDL.
+ * The connection on DBAL uses PlatformGrammar (ADR-027); the MySQL, PostgreSQL
+ * and SQLite grammars serve the deprecated PDO Connection.
  */
 abstract class Grammar
 {
+    /**
+     * Add LIMIT and OFFSET to a SELECT.
+     */
+    public function compileLimit(string $sql, ?int $limit, ?int $offset): string
+    {
+        if ($limit !== null) {
+            $sql .= ' LIMIT ' . $limit;
+        }
+        if ($offset !== null) {
+            $sql .= ($limit === null ? ' LIMIT ' . PHP_INT_MAX : '') . ' OFFSET ' . $offset;
+        }
+
+        return $sql;
+    }
+
+    /**
+     * What locks the selected rows until the transaction ends (2.12); empty where the database
+     * serializes writers itself (SQLite).
+     */
+    public function compileLockForUpdate(): string
+    {
+        return ' FOR UPDATE';
+    }
+
+    /**
+     * INSERT … rows, or update the conflicting ones (2.12): ON CONFLICT … DO UPDATE by default.
+     *
+     * @param list<string> $columns
+     * @param list<string> $uniqueBy The columns of the unique key that detects a conflict
+     * @param list<string> $update The columns to update on a conflict; none does nothing
+     */
+    public function compileUpsert(string $table, array $columns, int $rows, array $uniqueBy, array $update): string
+    {
+        $sql = $this->compileInsertRows($table, $columns, $rows) . ' ON CONFLICT (' . implode(', ', array_map($this->wrap(...), $uniqueBy)) . ')';
+        if ($update === []) {
+            return $sql . ' DO NOTHING';
+        }
+
+        return $sql . ' DO UPDATE SET ' . implode(', ', array_map(fn (string $column): string => $this->wrap($column) . ' = excluded.' . $this->wrap($column), $update));
+    }
+
+    /**
+     * MySQL and MariaDB: ON DUPLICATE KEY UPDATE, on any unique key of the table. With nothing to update, the
+     * first unique column is set to itself, so a conflict changes nothing (INSERT IGNORE would hide other errors).
+     *
+     * @param list<string> $columns
+     * @param list<string> $uniqueBy
+     * @param list<string> $update
+     */
+    final protected function compileOnDuplicateKeyUpsert(string $table, array $columns, int $rows, array $uniqueBy, array $update): string
+    {
+        $update = $update === [] ? [$uniqueBy[0]] : $update;
+
+        return $this->compileInsertRows($table, $columns, $rows) . ' ON DUPLICATE KEY UPDATE '
+            . implode(', ', array_map(fn (string $column): string => $this->wrap($column) . ' = VALUES(' . $this->wrap($column) . ')', $update));
+    }
+
+    /**
+     * @param list<string> $columns
+     */
+    public function compileInsertRows(string $table, array $columns, int $rows): string
+    {
+        $tuple = '(' . implode(', ', array_fill(0, count($columns), '?')) . ')';
+
+        return sprintf('INSERT INTO %s (%s) VALUES %s', $this->wrap($table), implode(', ', array_map($this->wrap(...), $columns)), implode(', ', array_fill(0, $rows, $tuple)));
+    }
+
     /**
      * Quote an identifier: "table.column", "*" and "column as alias" are handled.
      */
