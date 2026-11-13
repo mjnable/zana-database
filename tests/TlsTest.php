@@ -85,6 +85,72 @@ final class TlsTest extends TestCase
     }
 
     /**
+     * With a PostgreSQL that offers TLS: ZANA_TEST_PGSQL_TLS_PORT, its CA in ZANA_TEST_PGSQL_TLS_CA, and an unrelated
+     * CA in ZANA_TEST_TLS_OTHER_CA. tests/tls-server.md says how to start one beside the usual server.
+     */
+    public function testPostgresVerifyFullEncryptsAndRefusesAnotherCa(): void
+    {
+        [$port, $ca, $other] = [getenv('ZANA_TEST_PGSQL_TLS_PORT'), getenv('ZANA_TEST_PGSQL_TLS_CA'), getenv('ZANA_TEST_TLS_OTHER_CA')];
+        if (!is_string($port) || !is_string($ca) || !is_string($other) || !extension_loaded('pdo_pgsql')) {
+            $this->markTestSkipped('No PostgreSQL with TLS: set ZANA_TEST_PGSQL_TLS_PORT, ZANA_TEST_PGSQL_TLS_CA and ZANA_TEST_TLS_OTHER_CA.');
+        }
+        $settings = ['driver' => 'pgsql', 'host' => '127.0.0.1', 'port' => $port, 'database' => 'postgres', 'username' => 'postgres', 'password' => (string) getenv('ZANA_TEST_PGSQL_TLS_PASSWORD')];
+
+        $db = ConnectionFactory::create($settings + ['sslmode' => 'verify-full', 'sslrootcert' => $ca]);
+        $this->assertTrue((bool) ($db->select('SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()')[0]['ssl'] ?? false), 'verify-full with the right CA: encrypted');
+        $this->assertSame([], (new DatabaseTlsCheck(localHosts: []))->findings($this->app($settings + ['sslmode' => 'verify-full', 'sslrootcert' => $ca], 'production')), 'and check is satisfied');
+
+        $plain = ConnectionFactory::create($settings + ['sslmode' => 'disable']);
+        $this->assertFalse((bool) ($plain->select('SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()')[0]['ssl'] ?? true), 'disable: plain');
+
+        // A Windows path, with backslashes and a space, reaches libpq as written.
+        $folder = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'zana tls ' . bin2hex(random_bytes(3));
+        mkdir($folder);
+        copy($ca, $folder . DIRECTORY_SEPARATOR . "it's ca.pem");
+        try {
+            $spaced = ConnectionFactory::create($settings + ['sslmode' => 'verify-full', 'sslrootcert' => $folder . DIRECTORY_SEPARATOR . "it's ca.pem"]);
+            $this->assertTrue((bool) ($spaced->select('SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()')[0]['ssl'] ?? false), 'a path with backslashes, a space and a quote');
+        } finally {
+            unlink($folder . DIRECTORY_SEPARATOR . "it's ca.pem");
+            rmdir($folder);
+        }
+
+        $this->expectException(DatabaseException::class);
+        ConnectionFactory::create($settings + ['sslmode' => 'verify-full', 'sslrootcert' => $other]);   // a certificate this CA did not sign
+    }
+
+    /**
+     * With the MySQL server's own CA in ZANA_TEST_MYSQL_TLS_CA (MySQL writes ca.pem in its data folder).
+     */
+    public function testMysqlWithTheServerCaEncryptsAndRefusesAnotherCa(): void
+    {
+        [$ca, $other] = [getenv('ZANA_TEST_MYSQL_TLS_CA'), getenv('ZANA_TEST_TLS_OTHER_CA')];
+        if (!is_string($ca) || !is_string($other)) {
+            $this->markTestSkipped('No MySQL CA: set ZANA_TEST_MYSQL_TLS_CA and ZANA_TEST_TLS_OTHER_CA.');
+        }
+        $settings = $this->settings('mysql');
+
+        $db = ConnectionFactory::create($settings + ['ssl_ca' => $ca, 'ssl_verify' => false]);
+        $this->assertNotSame('', $db->select("SHOW SESSION STATUS LIKE 'Ssl_cipher'")[0]['Value'] ?? '', 'the server CA: encrypted');
+        $this->assertSame([], (new DatabaseTlsCheck(localHosts: []))->findings($this->app($settings + ['ssl_ca' => $ca, 'ssl_verify' => false], 'production')));
+
+        $this->expectException(DatabaseException::class);
+        ConnectionFactory::create($settings + ['ssl_ca' => $other, 'ssl_verify' => true]);
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     */
+    private function app(array $connection, string $environment): Application
+    {
+        return Application::configure(sys_get_temp_dir() . '/zana-database-tls')
+            ->withEnvironment($environment)
+            ->withConfiguration(['database.connections.main' => $connection, 'security.secret' => str_repeat('s', 40)])
+            ->withProviders(DatabaseServiceProvider::class)
+            ->build();
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private function settings(string $driver): array

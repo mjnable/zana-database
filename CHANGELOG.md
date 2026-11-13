@@ -13,6 +13,7 @@ not change this package is not listed.
 - TLS settings for connections (FE-78): `sslmode`, `sslrootcert`, `sslcert`, `sslkey` and `sslcrl` for PostgreSQL;
   `ssl_ca`, `ssl_cert`, `ssl_key` and `ssl_verify` for MySQL. An unknown `sslmode` is refused. libpq's `PGSSLMODE`
   in `.env` never reached the driver on Windows, and the connection stayed unencrypted.
+  Certificate paths are quoted for libpq, so Windows paths keep their backslashes and paths with spaces work.
 - `check` reports `database.tls` when a connection to another host is not encrypted, as the server itself reports it:
   an error in production, a warning elsewhere.
 

@@ -111,12 +111,15 @@ final class ConnectionFactory
     private static function pgsqlTls(array $config): array
     {
         $value = static fn (string $key): ?string => isset($config[$key]) && is_string($config[$key]) && $config[$key] !== '' ? $config[$key] : null;
+        // Paths go into libpq's connection string, where a backslash escapes and a space ends the value:
+        // C:\certs\ca.pem lost its backslashes, and C:\Program Files\… was cut. Quoted, they arrive as written.
+        $path = static fn (?string $file): ?string => $file === null ? null : "'" . str_replace(['\\', "'"], ['\\\\', "\\'"], $file) . "'";
         $tls = array_filter([
             'sslmode' => $value('sslmode'),
-            'sslrootcert' => $value('sslrootcert'),
-            'sslcert' => $value('sslcert'),
-            'sslkey' => $value('sslkey'),
-            'sslcrl' => $value('sslcrl'),
+            'sslrootcert' => $path($value('sslrootcert')),
+            'sslcert' => $path($value('sslcert')),
+            'sslkey' => $path($value('sslkey')),
+            'sslcrl' => $path($value('sslcrl')),
         ], static fn (?string $v): bool => $v !== null);
         if (isset($tls['sslmode']) && !in_array($tls['sslmode'], self::SSL_MODES, true)) {
             throw new DatabaseException("sslmode \"{$tls['sslmode']}\" is not one of " . implode(', ', self::SSL_MODES) . '.');
