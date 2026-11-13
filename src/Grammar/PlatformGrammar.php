@@ -133,6 +133,12 @@ final class PlatformGrammar extends Grammar
 
     protected function quote(string $identifier): string
     {
+        // SQLite reads a double-quoted name that matches no column as a string, so a typo matched every row
+        // (FE-72, 2.20). It reads backticks as identifiers only.
+        if ($this->platform instanceof SQLitePlatform) {
+            return '`' . str_replace('`', '``', $identifier) . '`';
+        }
+
         return $this->platform->quoteSingleIdentifier($identifier);
     }
 

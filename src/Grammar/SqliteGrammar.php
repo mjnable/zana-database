@@ -30,7 +30,8 @@ final class SqliteGrammar extends Grammar
 
     protected function quote(string $identifier): string
     {
-        return '"' . str_replace('"', '""', $identifier) . '"';
+        // Backticks: SQLite reads a double-quoted unknown name as a string (FE-72, 2.20).
+        return '`' . str_replace('`', '``', $identifier) . '`';
     }
 
     protected function type(ColumnDefinition $column): string

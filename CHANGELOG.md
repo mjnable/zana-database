@@ -3,6 +3,14 @@
 All Zana packages share one version number and are released together. A release that did
 not change this package is not listed.
 
+## 2.20.0 — Unreleased
+
+### Security
+
+- On SQLite, identifiers are quoted with backticks. SQLite read a double-quoted name that matched no column as a
+  string, so `where('nope', 'nope')` matched every row and `value('reason')` returned `'reason'`; an unknown column now
+  fails, as on PostgreSQL and MySQL (FE-72).
+
 ## 2.12.0 — 2026-11-04
 
 ### Added

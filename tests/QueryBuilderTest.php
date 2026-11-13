@@ -136,8 +136,9 @@ final class QueryBuilderTest extends TestCase
             ->toSql();
 
         $this->assertSame(
-            ['SELECT "patients"."name", "m"."bmi" AS "bmi" FROM "patients" INNER JOIN "measurements" AS "m" ON "m"."patient_id" = "patients"."id" WHERE "age" >= ? AND "city" IN (?, ?) ORDER BY "name" ASC LIMIT 10', [18, 'London', 'Paris']],
-            $query($this->db)
+            ['SELECT `patients`.`name`, `m`.`bmi` AS `bmi` FROM `patients` INNER JOIN `measurements` AS `m` ON `m`.`patient_id` = `patients`.`id` WHERE `age` >= ? AND `city` IN (?, ?) ORDER BY `name` ASC LIMIT 10', [18, 'London', 'Paris']],
+            $query($this->db),
+            'SQLite: backticks, never double quotes (FE-72)'
         );
         $this->assertSame(
             'SELECT `patients`.`name`, `m`.`bmi` AS `bmi` FROM `patients` INNER JOIN `measurements` AS `m` ON `m`.`patient_id` = `patients`.`id` WHERE `age` >= ? AND `city` IN (?, ?) ORDER BY `name` ASC LIMIT 10',
@@ -148,10 +149,32 @@ final class QueryBuilderTest extends TestCase
 
     public function testIdentifiersAreQuotedSafely(): void
     {
-        [$sql] = $this->db->table('weird"table')->select('col"umn')->toSql();
+        [$sql] = $this->db->table('weird`table')->select('col`umn')->toSql();
         [$mysql] = (new GrammarConnection($this->db, new MysqlGrammar()))->table('weird`table')->toSql();
+        [$postgres] = (new GrammarConnection($this->db, new PostgresGrammar()))->table('weird"table')->select('col"umn')->toSql();
 
-        $this->assertSame('SELECT "col""umn" FROM "weird""table"', $sql);
+        $this->assertSame('SELECT `col``umn` FROM `weird``table`', $sql);
         $this->assertSame('SELECT * FROM `weird``table`', $mysql);
+        $this->assertSame('SELECT "col""umn" FROM "weird""table"', $postgres);
+    }
+
+    public function testAnUnknownColumnFailsOnSqliteAsElsewhere(): void
+    {
+        $this->db->table('patients')->insert(['name' => 'Ada', 'age' => 36, 'city' => 'London']);
+
+        // SQLite reads "nope" as a string when no column matches: the WHERE matched every row (FE-72).
+        foreach ([
+            'where' => fn () => $this->db->table('patients')->where('nope', 'nope')->count(),
+            'value' => fn () => $this->db->table('patients')->value('reason'),
+            'select' => fn () => $this->db->table('patients')->select('reason')->get(),
+            'orderBy' => fn () => $this->db->table('patients')->orderBy('nope')->get(),
+        ] as $name => $query) {
+            try {
+                $query();
+                $this->fail("{$name}: an unknown column must fail.");
+            } catch (DatabaseException) {
+                $this->addToAssertionCount(1);
+            }
+        }
     }
 }
