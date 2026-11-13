@@ -53,7 +53,8 @@ final class DatabaseServiceProvider extends ServiceProvider
             ->singleton(MigrationsSection::class, static fn (ServiceResolverInterface $r): MigrationsSection => new MigrationsSection(static fn (): Migrator => self::migrator($r)))->uses(Migrator::class)
             ->tag(InspectionSection::TAG, MigrationsSection::class)
             ->singleton(MigrationsCheck::class, static fn (ServiceResolverInterface $r): MigrationsCheck => new MigrationsCheck(static fn (): Migrator => self::migrator($r)))->uses(Migrator::class)
-            ->tag(ApplicationCheck::TAG, MigrationsCheck::class);
+            ->tag(ApplicationCheck::TAG, MigrationsCheck::class)
+            ->singleton(Inspection\DatabaseTlsCheck::class)->tag(ApplicationCheck::TAG, Inspection\DatabaseTlsCheck::class);
 
         foreach ([MigrateCommand::class, RollbackCommand::class, StatusCommand::class, MakeMigrationCommand::class] as $command) {
             $services->singleton($command)->tag(ConsoleKernel::TAG, $command);

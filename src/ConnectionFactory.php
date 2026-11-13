@@ -15,6 +15,13 @@ use Doctrine\DBAL\Exception as DbalException;
  *     ['driver' => 'pgsql', 'host' => 'db', 'port' => 5432, 'database' => 'bmi', 'username' => 'bmi', 'password' => '...']
  *
  * Since 2.12 the connection runs on Doctrine DBAL (ADR-027).
+ *
+ * TLS (FE-78, 2.20): for PostgreSQL, sslmode, sslrootcert, sslcert, sslkey
+ * and sslcrl go into the DSN; for MySQL, ssl_ca, ssl_cert, ssl_key and
+ * ssl_verify become the PDO SSL options. libpq's PGSSLMODE in .env does not
+ * reach the driver on every platform, so set them here.
+ *
+ *     ['driver' => 'pgsql', 'host' => 'db.internal', …, 'sslmode' => 'verify-full', 'sslrootcert' => '/etc/ssl/db-ca.pem']
  */
 final class ConnectionFactory
 {
@@ -36,7 +43,11 @@ final class ConnectionFactory
             default => throw new DatabaseException("Unknown database driver: \"{$driver}\". Use sqlite, mysql or pgsql."),
         };
         if ($driver !== 'sqlite') {
-            $params += ['user' => $string('username'), 'password' => $string('password'), 'driverOptions' => [\PDO::ATTR_EMULATE_PREPARES => false]];
+            // "+", not "...": spreading would renumber the PDO attribute keys.
+            $params += ['user' => $string('username'), 'password' => $string('password'), 'driverOptions' => [\PDO::ATTR_EMULATE_PREPARES => false] + self::mysqlTls($driver, $config)];
+        }
+        if ($driver === 'pgsql') {
+            $params += self::pgsqlTls($config);
         }
 
         try {
@@ -89,6 +100,51 @@ final class ConnectionFactory
         }
 
         return new Connection($pdo);
+    }
+
+    private const array SSL_MODES = ['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full'];
+
+    /**
+     * @param array<string, mixed> $config
+     * @return array{sslmode?: string, sslrootcert?: string, sslcert?: string, sslkey?: string, sslcrl?: string}
+     */
+    private static function pgsqlTls(array $config): array
+    {
+        $value = static fn (string $key): ?string => isset($config[$key]) && is_string($config[$key]) && $config[$key] !== '' ? $config[$key] : null;
+        $tls = array_filter([
+            'sslmode' => $value('sslmode'),
+            'sslrootcert' => $value('sslrootcert'),
+            'sslcert' => $value('sslcert'),
+            'sslkey' => $value('sslkey'),
+            'sslcrl' => $value('sslcrl'),
+        ], static fn (?string $v): bool => $v !== null);
+        if (isset($tls['sslmode']) && !in_array($tls['sslmode'], self::SSL_MODES, true)) {
+            throw new DatabaseException("sslmode \"{$tls['sslmode']}\" is not one of " . implode(', ', self::SSL_MODES) . '.');
+        }
+
+        return $tls;
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     * @return array<int, string|bool>
+     */
+    private static function mysqlTls(string $driver, array $config): array
+    {
+        if ($driver !== 'mysql' || !class_exists(\Pdo\Mysql::class)) {
+            return [];
+        }
+        $options = [];
+        foreach (['ssl_ca' => \Pdo\Mysql::ATTR_SSL_CA, 'ssl_cert' => \Pdo\Mysql::ATTR_SSL_CERT, 'ssl_key' => \Pdo\Mysql::ATTR_SSL_KEY] as $key => $attribute) {
+            if (isset($config[$key]) && is_string($config[$key]) && $config[$key] !== '') {
+                $options[$attribute] = $config[$key];
+            }
+        }
+        if (array_key_exists('ssl_verify', $config)) {
+            $options[\Pdo\Mysql::ATTR_SSL_VERIFY_SERVER_CERT] = filter_var($config['ssl_verify'], FILTER_VALIDATE_BOOL);
+        }
+
+        return $options;
     }
 
     /**
