@@ -38,12 +38,18 @@ final class Connection implements ConnectionInterface
         };
     }
 
+    /**
+     * @phpstan-impure
+     */
     public function select(string $sql, array $bindings = []): array
     {
         /** @var list<array<string, mixed>> */
         return $this->run($sql, $bindings)->fetchAll(\PDO::FETCH_ASSOC);
     }
 
+    /**
+     * @phpstan-impure
+     */
     public function first(string $sql, array $bindings = []): ?array
     {
         $row = $this->run($sql, $bindings)->fetch(\PDO::FETCH_ASSOC);
@@ -52,6 +58,9 @@ final class Connection implements ConnectionInterface
         return $row === false ? null : $row;
     }
 
+    /**
+     * @phpstan-impure
+     */
     public function scalar(string $sql, array $bindings = []): mixed
     {
         // fetchColumn() says false for "no row" too, so a false value read as null (FE-79).
@@ -60,11 +69,17 @@ final class Connection implements ConnectionInterface
         return is_array($row) ? ($row[0] ?? null) : null;
     }
 
+    /**
+     * @phpstan-impure
+     */
     public function execute(string $sql, array $bindings = []): int
     {
         return $this->run($sql, $bindings)->rowCount();
     }
 
+    /**
+     * @phpstan-impure
+     */
     public function insert(string $table, array $values): string
     {
         $this->table($table)->insert($values);
@@ -76,6 +91,9 @@ final class Connection implements ConnectionInterface
         }
     }
 
+    /**
+     * @phpstan-impure
+     */
     public function transaction(callable $callback): mixed
     {
         $this->beginTransaction();

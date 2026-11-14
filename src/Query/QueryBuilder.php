@@ -270,6 +270,7 @@ final class QueryBuilder
 
     /**
      * @return list<array<string, mixed>>
+     * @phpstan-impure
      */
     public function get(): array
     {
@@ -280,6 +281,7 @@ final class QueryBuilder
 
     /**
      * @return array<string, mixed>|null
+     * @phpstan-impure
      */
     public function first(): ?array
     {
@@ -289,6 +291,9 @@ final class QueryBuilder
         return $this->connection->first($sql, $bindings);
     }
 
+    /**
+     * @phpstan-impure
+     */
     public function value(string $column): mixed
     {
         $row = (clone $this)->select($column)->first();
@@ -298,12 +303,16 @@ final class QueryBuilder
 
     /**
      * @return list<mixed>
+     * @phpstan-impure
      */
     public function pluck(string $column): array
     {
         return array_map(static fn (array $row): mixed => array_values($row)[0], (clone $this)->select($column)->get());
     }
 
+    /**
+     * @phpstan-impure
+     */
     public function count(): int
     {
         $clone = clone $this;
@@ -314,6 +323,9 @@ final class QueryBuilder
         return (int) $this->connection->scalar($sql, $bindings);
     }
 
+    /**
+     * @phpstan-impure
+     */
     public function exists(): bool
     {
         return $this->first() !== null;
@@ -323,6 +335,7 @@ final class QueryBuilder
      * Insert one row (an associative array) or several (a list of rows with the same columns).
      *
      * @param array<string, mixed>|list<array<string, mixed>> $values
+     * @phpstan-impure
      */
     public function insert(array $values): int
     {
@@ -357,6 +370,7 @@ final class QueryBuilder
     /**
      * @param array<string, mixed> $values
      * @param bool $force Allow updating every row (no where clause)
+     * @phpstan-impure
      */
     public function update(array $values, bool $force = false): int
     {
@@ -382,6 +396,7 @@ final class QueryBuilder
      *
      * @param array<string, mixed> $values Other columns to set in the same statement
      * @param bool $force Allow updating every row (no where clause)
+     * @phpstan-impure
      */
     public function increment(string $column, int|float $amount = 1, array $values = [], bool $force = false): int
     {
@@ -401,6 +416,7 @@ final class QueryBuilder
 
     /**
      * @param array<string, mixed> $values
+     * @phpstan-impure
      */
     public function decrement(string $column, int|float $amount = 1, array $values = [], bool $force = false): int
     {
@@ -415,6 +431,7 @@ final class QueryBuilder
      * @param array<string, mixed>|list<array<string, mixed>> $values
      * @param string|list<string> $uniqueBy
      * @param list<string>|null $update
+     * @phpstan-impure
      */
     public function upsert(array $values, string|array $uniqueBy, ?array $update = null): int
     {
@@ -451,6 +468,7 @@ final class QueryBuilder
 
     /**
      * @param bool $force Allow deleting every row (no where clause)
+     * @phpstan-impure
      */
     public function delete(bool $force = false): int
     {

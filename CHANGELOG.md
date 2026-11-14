@@ -45,6 +45,10 @@ not change this package is not listed.
 
 ### Changed
 
+- `@phpstan-impure` on every `QueryBuilder` and `ConnectionInterface` method that reads or writes the database
+  (FE-77). PHPStan took a second `exists()` to return the first one's result, and reported the re-check of the
+  race-safe insert (check, insert, re-check on `DatabaseException`) as "If condition is always false". The package
+  now analyses that pattern at level 8 (`tests/RaceSafeInsert.php`), and impossible branches are still reported.
 - On SQLite, `table()` refuses a change that makes DBAL rebuild the table (adding an index, dropping a column) when
   the table has CHECK constraints or triggers: the rebuilt table kept only the columns and indexes, and the
   constraints were dropped without a word. Adding a nullable column needs no rebuild and still works.

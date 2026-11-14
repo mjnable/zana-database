@@ -29,11 +29,17 @@ final class DbalConnection implements ConnectionInterface
     {
     }
 
+    /**
+     * @phpstan-impure
+     */
     public function select(string $sql, array $bindings = []): array
     {
         return $this->run($sql, $bindings, static fn (DoctrineConnection $c, array $params, array $types): array => $c->executeQuery($sql, $params, $types)->fetchAllAssociative());
     }
 
+    /**
+     * @phpstan-impure
+     */
     public function first(string $sql, array $bindings = []): ?array
     {
         $row = $this->run($sql, $bindings, static fn (DoctrineConnection $c, array $params, array $types): array|false => $c->executeQuery($sql, $params, $types)->fetchAssociative());
@@ -41,6 +47,9 @@ final class DbalConnection implements ConnectionInterface
         return $row === false ? null : $row;
     }
 
+    /**
+     * @phpstan-impure
+     */
     public function scalar(string $sql, array $bindings = []): mixed
     {
         // fetchOne() says false for "no row" too, so a false value read as null (FE-79).
@@ -49,11 +58,17 @@ final class DbalConnection implements ConnectionInterface
         return is_array($row) ? ($row[0] ?? null) : null;
     }
 
+    /**
+     * @phpstan-impure
+     */
     public function execute(string $sql, array $bindings = []): int
     {
         return (int) $this->run($sql, $bindings, static fn (DoctrineConnection $c, array $params, array $types): int|string => $c->executeStatement($sql, $params, $types));
     }
 
+    /**
+     * @phpstan-impure
+     */
     public function insert(string $table, array $values): string
     {
         $this->table($table)->insert($values);
@@ -65,6 +80,9 @@ final class DbalConnection implements ConnectionInterface
         }
     }
 
+    /**
+     * @phpstan-impure
+     */
     public function transaction(callable $callback): mixed
     {
         $this->beginTransaction();

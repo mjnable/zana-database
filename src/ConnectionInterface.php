@@ -16,12 +16,14 @@ interface ConnectionInterface
     /**
      * @param array<array-key, mixed> $bindings
      * @return list<array<string, mixed>>
+     * @phpstan-impure
      */
     public function select(string $sql, array $bindings = []): array;
 
     /**
      * @param array<array-key, mixed> $bindings
      * @return array<string, mixed>|null
+     * @phpstan-impure
      */
     public function first(string $sql, array $bindings = []): ?array;
 
@@ -31,18 +33,21 @@ interface ConnectionInterface
      * SQLite and MySQL return 0 and 1.
      *
      * @param array<array-key, mixed> $bindings
+     * @phpstan-impure
      */
     public function scalar(string $sql, array $bindings = []): mixed;
 
     /**
      * @param array<array-key, mixed> $bindings
      * @return int Affected rows
+     * @phpstan-impure
      */
     public function execute(string $sql, array $bindings = []): int;
 
     /**
      * @param array<string, mixed> $values
      * @return string The last insert id ('' when the driver has none)
+     * @phpstan-impure
      */
     public function insert(string $table, array $values): string;
 
@@ -52,6 +57,7 @@ interface ConnectionInterface
      * @template T
      * @param callable(ConnectionInterface): T $callback
      * @return T
+     * @phpstan-impure
      */
     public function transaction(callable $callback): mixed;
 
