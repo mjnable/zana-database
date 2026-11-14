@@ -165,6 +165,7 @@ final class Connection implements ConnectionInterface
         try {
             $statement = $this->pdo->prepare($sql);
             foreach ($bindings as $key => $value) {
+                $value = DatabaseException::bindable($key, $value, $sql);
                 $statement->bindValue(is_int($key) ? $key + 1 : ':' . ltrim($key, ':'), $value, match (true) {
                     is_int($value) => \PDO::PARAM_INT,
                     is_bool($value) => \PDO::PARAM_BOOL,

@@ -7,6 +7,10 @@ not change this package is not listed.
 
 ### Security
 
+- A value bound to a query must be a string, a number, a bool, null or a resource; a `Stringable` binds as its
+  string (S33). An array was bound as the text `Array` with only a warning, so a form field sent as `email[]=x`
+  stored `"Array"`, and `where('token', $value)` compared with it. An array or another object now throws a
+  `DatabaseException` that names its type, never its value, on both connections and in raw SQL.
 - `orderByAllowed($requested, $allowed, default:, direction:)` and `selectAllowed($requested, $allowed)` take a
   sort or a field list from a request (S29). `orderBy()` and `select()` accept any real column, so `?sort=reset_token`
   sorted by a secret. Only allowed names count, and a map gives each name its column (`'newest' => 'created_at'`).

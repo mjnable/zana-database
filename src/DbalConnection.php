@@ -160,7 +160,7 @@ final class DbalConnection implements ConnectionInterface
         $types = [];
         foreach ($bindings as $key => $value) {
             $name = is_int($key) ? max(0, $key) : ltrim($key, ':');
-            $params[$name] = $value;
+            $params[$name] = $value = DatabaseException::bindable($key, $value, $sql);
             $types[$name] = match (true) {
                 is_int($value) => ParameterType::INTEGER,
                 is_bool($value) => ParameterType::BOOLEAN,

@@ -97,6 +97,40 @@ final class ConnectionTest extends TestCase
         }
     }
 
+    public function testAnArrayOrObjectIsNeverBoundAsTheTextArray(): void
+    {
+        // S33, on both connections: a form field sent as email[]=x arrives as an array.
+        foreach (['dbal' => $this->db, 'pdo' => ConnectionFactory::createPdo(['driver' => 'sqlite', 'database' => ':memory:'])] as $kind => $db) {
+            $db->execute('CREATE TABLE IF NOT EXISTS patients (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, age INTEGER, active INTEGER)');
+            $db->insert('patients', ['name' => 'Array', 'age' => 1]);
+            foreach ([
+                static fn () => $db->table('patients')->insert(['name' => ['x']]),
+                static fn () => $db->table('patients')->where('id', 1)->update(['name' => ['a' => ['b' => 'secret-value']]]),
+                static fn () => $db->table('patients')->where('name', ['x'])->get(),
+                static fn () => $db->select('SELECT * FROM patients WHERE name = :name', ['name' => new \DateTimeImmutable()]),
+                static fn () => $db->first('SELECT * FROM patients WHERE name = ?', [new \stdClass()]),
+            ] as $i => $hostile) {
+                try {
+                    $hostile();
+                    $this->fail("{$kind} #{$i}: an array or object was bound");
+                } catch (DatabaseException $e) {
+                    $this->assertStringContainsString('Cannot bind', $e->getMessage(), "{$kind} #{$i}");
+                    $this->assertStringNotContainsString('secret-value', $e->getMessage(), 'values never appear');
+                }
+            }
+            $this->assertSame(1, $db->table('patients')->count(), "{$kind}: nothing was written");
+            $this->assertSame('Array', $db->table('patients')->value('name'), "{$kind}: the row is unchanged");
+
+            $name = new class () implements \Stringable {
+                public function __toString(): string
+                {
+                    return 'Array';
+                }
+            };
+            $this->assertSame(1, $db->table('patients')->where('name', $name)->count(), "{$kind}: a Stringable binds as its string");
+        }
+    }
+
     public function testCommitWithoutTransactionFails(): void
     {
         $this->expectException(DatabaseException::class);
