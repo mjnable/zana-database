@@ -50,6 +50,29 @@ final class QueryBuilder
         return $this;
     }
 
+    /**
+     * Selects the requested columns that are allowed (2.20, S29), for a field
+     * list from a request: select() takes any real column, so ?fields=secret
+     * would read one. Names that are not allowed are dropped; with none left,
+     * or no request, every allowed column is selected.
+     *
+     * @param mixed $requested A list of names or a comma-separated string, as a request sends it
+     * @param list<string>|array<string, string> $allowed The names a request may send; a map gives each one's column
+     */
+    public function selectAllowed(mixed $requested, array $allowed): self
+    {
+        $columns = self::allowedColumns($allowed);
+        $names = is_string($requested) ? explode(',', $requested) : (is_array($requested) ? $requested : []);
+        $chosen = [];
+        foreach ($names as $name) {
+            if (is_string($name) && isset($columns[trim($name)])) {
+                $chosen[trim($name)] = $columns[trim($name)];
+            }
+        }
+
+        return $this->select(...array_values($chosen === [] ? $columns : $chosen));
+    }
+
     public function distinct(): self
     {
         $this->distinct = true;
@@ -153,6 +176,52 @@ final class QueryBuilder
         $this->orders[] = $this->wrap($column) . ' ' . $direction;
 
         return $this;
+    }
+
+    /**
+     * Orders by a column a request names, if it is allowed (2.20, S29):
+     * orderBy() takes any real column, so ?sort=reset_token sorts by a secret,
+     * and where a client sees its own rows among the others, the order narrows
+     * the secret down. Anything
+     * else, an unknown name or an array, orders by $default; a direction other
+     * than asc or desc becomes $defaultDirection, so a request never causes an error.
+     *
+     *     ->orderByAllowed($request->query('sort'), ['name', 'newest' => 'created_at'], default: 'newest', direction: $request->query('dir'))
+     *
+     * @param list<string>|array<string, string> $allowed The names a request may send; a map gives each one's column
+     * @param string $default An allowed name
+     * @throws \InvalidArgumentException When $default or $defaultDirection is not allowed: a mistake in code, not in the request
+     */
+    public function orderByAllowed(mixed $requested, array $allowed, string $default, mixed $direction = null, string $defaultDirection = 'asc'): self
+    {
+        $columns = self::allowedColumns($allowed);
+        if (!isset($columns[$default])) {
+            throw new \InvalidArgumentException("The default sort \"{$default}\" is not one of the allowed names: " . implode(', ', array_keys($columns)) . '.');
+        }
+        if (!in_array(strtolower($defaultDirection), ['asc', 'desc'], true)) {
+            throw new \InvalidArgumentException("Unknown default sort direction: {$defaultDirection}.");
+        }
+        $column = is_string($requested) && isset($columns[$requested]) ? $columns[$requested] : $columns[$default];
+        $direction = is_string($direction) && in_array(strtolower($direction), ['asc', 'desc'], true) ? $direction : $defaultDirection;
+
+        return $this->orderBy($column, $direction);
+    }
+
+    /**
+     * @param list<string>|array<string, string> $allowed
+     * @return array<string, string> Each allowed name with its column
+     */
+    private static function allowedColumns(array $allowed): array
+    {
+        if ($allowed === []) {
+            throw new \InvalidArgumentException('Name at least one allowed column.');
+        }
+        $columns = [];
+        foreach ($allowed as $name => $column) {
+            $columns[is_int($name) ? $column : $name] = $column;
+        }
+
+        return $columns;
     }
 
     public function groupBy(string ...$columns): self

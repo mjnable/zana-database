@@ -7,6 +7,11 @@ not change this package is not listed.
 
 ### Security
 
+- `orderByAllowed($requested, $allowed, default:, direction:)` and `selectAllowed($requested, $allowed)` take a
+  sort or a field list from a request (S29). `orderBy()` and `select()` accept any real column, so `?sort=reset_token`
+  sorted by a secret. Only allowed names count, and a map gives each name its column (`'newest' => 'created_at'`).
+  An unknown name, an array or a bad direction falls back to the default and never causes an error; a default that
+  is not in the list is a mistake in code and throws `InvalidArgumentException`.
 - On SQLite, identifiers are quoted with backticks. SQLite read a double-quoted name that matched no column as a
   string, so `where('nope', 'nope')` matched every row and `value('reason')` returned `'reason'`; an unknown column now
   fails, as on PostgreSQL and MySQL (FE-72).

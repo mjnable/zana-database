@@ -44,6 +44,53 @@ final class QueryBuilderTest extends TestCase
         $this->assertSame(['Edsger'], $this->db->table('patients')->offset(3)->pluck('name'), 'offset without limit');
     }
 
+    // ── S29 ────────────────────────────────────────────────────────────────
+
+    public function testARequestedSortOutsideTheListFallsBackToTheDefault(): void
+    {
+        $sorted = fn (mixed $sort, mixed $dir = null): array => $this->db->table('patients')
+            ->orderByAllowed($sort, ['name', 'oldest' => 'age'], default: 'name', direction: $dir)
+            ->pluck('name');
+
+        $this->assertSame(['Ada', 'Alan', 'Edsger', 'Grace'], $sorted(null));
+        $this->assertSame(['Ada', 'Alan', 'Grace', 'Edsger'], $sorted('oldest'));
+        $this->assertSame(['Edsger', 'Grace', 'Alan', 'Ada'], $sorted('oldest', 'DESC'));
+        foreach (['city', 'age', 'id', 'name; DROP TABLE patients', ['name'], 7] as $hostile) {
+            $this->assertSame(['Ada', 'Alan', 'Edsger', 'Grace'], $sorted($hostile), 'only an allowed name sorts: ' . json_encode($hostile));
+        }
+        $this->assertSame(['Ada', 'Alan', 'Edsger', 'Grace'], $sorted('name', 'sideways'), 'a bad direction never causes an error');
+        $this->assertSame(['Ada', 'Alan', 'Edsger', 'Grace'], $sorted('name', ['desc']));
+        $this->assertSame(['Edsger', 'Grace', 'Alan', 'Ada'], $this->db->table('patients')->orderByAllowed('x', ['age'], default: 'age', defaultDirection: 'desc')->pluck('name'));
+    }
+
+    public function testAMistakeInTheAllowListIsRefused(): void
+    {
+        foreach ([
+            static fn ($q) => $q->orderByAllowed('name', ['name'], default: 'age'),
+            static fn ($q) => $q->orderByAllowed('name', ['name'], default: 'name', defaultDirection: 'up'),
+            static fn ($q) => $q->orderByAllowed('name', [], default: 'name'),
+            static fn ($q) => $q->selectAllowed('name', []),
+        ] as $i => $mistake) {
+            try {
+                $mistake($this->db->table('patients'));
+                $this->fail("mistake {$i} was accepted");
+            } catch (\InvalidArgumentException) {
+                $this->addToAssertionCount(1);
+            }
+        }
+    }
+
+    public function testARequestedFieldListKeepsOnlyAllowedColumns(): void
+    {
+        $first = fn (mixed $fields): array => $this->db->table('patients')->selectAllowed($fields, ['name', 'town' => 'city'])->orderBy('id')->first() ?? [];
+
+        $this->assertSame(['name' => 'Ada', 'city' => 'London'], $first(null), 'none asked: every allowed column');
+        $this->assertSame(['city' => 'London'], $first('town'));
+        $this->assertSame(['city' => 'London', 'name' => 'Ada'], $first(' town , name,town'));
+        $this->assertSame(['name' => 'Ada'], $first(['name', 'age', 'id', ['x']]));
+        $this->assertSame(['name' => 'Ada', 'city' => 'London'], $first('age,id'), 'nothing allowed asked: every allowed column, never the others');
+    }
+
     public function testOrInNullAndLike(): void
     {
         $this->assertSame(['Ada', 'Edsger'], $this->db->table('patients')->where('age', '<', 40)->orWhere('age', '>', 70)->orderBy('id')->pluck('name'));
