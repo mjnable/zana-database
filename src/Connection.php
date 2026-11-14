@@ -54,9 +54,10 @@ final class Connection implements ConnectionInterface
 
     public function scalar(string $sql, array $bindings = []): mixed
     {
-        $value = $this->run($sql, $bindings)->fetchColumn();
+        // fetchColumn() says false for "no row" too, so a false value read as null (FE-79).
+        $row = $this->run($sql, $bindings)->fetch(\PDO::FETCH_NUM);
 
-        return $value === false ? null : $value;
+        return is_array($row) ? ($row[0] ?? null) : null;
     }
 
     public function execute(string $sql, array $bindings = []): int

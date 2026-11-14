@@ -37,6 +37,13 @@ not change this package is not listed.
   ($q) => $q->where('age', '<', 18)->orWhere('age', '>', 65))` (FE-75). Groups nest; an empty group adds nothing.
   `where('age')` with no value now throws `ArgumentCountError` with a message, as before but clearer.
 
+### Changed
+
+- `scalar()` returns `false` for a false value and `null` only when there is no row or the value is SQL `NULL`
+  (FE-79). Before, `scalar('SELECT false')` returned `null` on PostgreSQL, the same as no row, so `=== false` never
+  matched. SQLite and MySQL return `0` and `1`, as before. Code that read a PostgreSQL boolean with `=== null` for
+  "no" must now test `=== false` or `!$value`.
+
 ## 2.12.0 — 2026-11-04
 
 ### Added

@@ -26,7 +26,9 @@ interface ConnectionInterface
     public function first(string $sql, array $bindings = []): ?array;
 
     /**
-     * The first column of the first row, or null.
+     * The first column of the first row, or null when there is no row. A
+     * false value stays false (2.20, FE-79): PostgreSQL returns booleans,
+     * SQLite and MySQL return 0 and 1.
      *
      * @param array<array-key, mixed> $bindings
      */

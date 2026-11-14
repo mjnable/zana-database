@@ -43,9 +43,10 @@ final class DbalConnection implements ConnectionInterface
 
     public function scalar(string $sql, array $bindings = []): mixed
     {
-        $value = $this->run($sql, $bindings, static fn (DoctrineConnection $c, array $params, array $types): mixed => $c->executeQuery($sql, $params, $types)->fetchOne());
+        // fetchOne() says false for "no row" too, so a false value read as null (FE-79).
+        $row = $this->run($sql, $bindings, static fn (DoctrineConnection $c, array $params, array $types): mixed => $c->executeQuery($sql, $params, $types)->fetchNumeric());
 
-        return $value === false ? null : $value;
+        return is_array($row) ? ($row[0] ?? null) : null;
     }
 
     public function execute(string $sql, array $bindings = []): int

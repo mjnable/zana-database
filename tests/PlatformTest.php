@@ -172,6 +172,24 @@ final class PlatformTest extends TestCase
     }
 
     #[DataProvider('drivers')]
+    public function testScalarKeepsAFalseValue(string $driver): void
+    {
+        // FE-79, on both connections: false was read as null, the same as no row.
+        foreach (['dbal' => $this->connect($driver), 'pdo' => ConnectionFactory::createPdo($this->settings($driver))] as $kind => $db) {
+            $false = $db->scalar('SELECT 1 = 0');
+            $this->assertNotNull($false, "{$kind}: a false value is not \"no row\"");
+            $this->assertFalse((bool) $false, $kind);
+            if ($driver === 'pgsql') {
+                $this->assertFalse($false, "{$kind}: PostgreSQL returns a boolean");
+                $this->assertTrue($db->scalar('SELECT 1 = 1'), $kind);
+            }
+            $this->assertNull($db->scalar('SELECT 1 WHERE 1 = 0'), "{$kind}: no row");
+            $this->assertNull($db->scalar('SELECT NULL'), "{$kind}: SQL NULL");
+            $this->assertSame('', $db->scalar("SELECT ''"), $kind);
+        }
+    }
+
+    #[DataProvider('drivers')]
     public function testNestedTransactionsUseSavepoints(string $driver): void
     {
         $db = $this->connect($driver);
