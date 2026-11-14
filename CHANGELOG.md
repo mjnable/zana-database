@@ -7,6 +7,11 @@ not change this package is not listed.
 
 ### Security
 
+- `whereLike($column, $text, LikeMatch::StartsWith|Contains|EndsWith)` and `orWhereLike()` search text where the
+  user's `%`, `_` and `!` are plain characters, with `ESCAPE '!'` on every database (FE-75, S31). With
+  `where('email', 'like', $input . '%')`, a user's `%` matched anything, and escaping by hand differed per database:
+  `addcslashes()` worked on PostgreSQL and never matched `_` on SQLite. `!` is the escape character because a
+  backslash is itself an escape in MySQL string literals. Case follows the database.
 - A value bound to a query must be a string, a number, a bool, null or a resource; a `Stringable` binds as its
   string (S33). An array was bound as the text `Array` with only a warning, so a form field sent as `email[]=x`
   stored `"Array"`, and `where('token', $value)` compared with it. An array or another object now throws a
@@ -25,6 +30,12 @@ not change this package is not listed.
   Certificate paths are quoted for libpq, so Windows paths keep their backslashes and paths with spaces work.
 - `check` reports `database.tls` when a connection to another host is not encrypted, as the server itself reports it:
   an error in production, a warning elsewhere.
+
+### Added
+
+- `where(Closure)` and `orWhere(Closure)` group conditions in parentheses: `->where('city', 'London')->where(fn
+  ($q) => $q->where('age', '<', 18)->orWhere('age', '>', 65))` (FE-75). Groups nest; an empty group adds nothing.
+  `where('age')` with no value now throws `ArgumentCountError` with a message, as before but clearer.
 
 ## 2.12.0 — 2026-11-04
 

@@ -11,6 +11,7 @@ use Zana\Database\ConnectionInterface;
 use Zana\Database\DatabaseException;
 use Zana\Database\Grammar\MysqlGrammar;
 use Zana\Database\Grammar\PostgresGrammar;
+use Zana\Database\Query\QueryBuilder;
 
 final class QueryBuilderTest extends TestCase
 {
@@ -89,6 +90,25 @@ final class QueryBuilderTest extends TestCase
         $this->assertSame(['city' => 'London', 'name' => 'Ada'], $first(' town , name,town'));
         $this->assertSame(['name' => 'Ada'], $first(['name', 'age', 'id', ['x']]));
         $this->assertSame(['name' => 'Ada', 'city' => 'London'], $first('age,id'), 'nothing allowed asked: every allowed column, never the others');
+    }
+
+    public function testGroupedConditions(): void
+    {
+        // FE-75: London AND (under 40 OR over 70); without the group, OR binds looser and Edsger matches too.
+        $grouped = $this->db->table('patients')->where('city', 'London')->where(static fn (QueryBuilder $q) => $q->where('age', '<', 40)->orWhere('age', '>', 70));
+        [$sql, $bindings] = $grouped->toSql();
+
+        $this->assertSame(['Ada'], $grouped->pluck('name'));
+        $this->assertSame(['Ada', 'Edsger'], $this->db->table('patients')->where('city', 'London')->where('age', '<', 40)->orWhere('age', '>', 70)->orderBy('id')->pluck('name'));
+        $this->assertStringEndsWith(' WHERE `city` = ? AND (`age` < ? OR `age` > ?)', $sql);
+        $this->assertSame(['London', 40, 70], $bindings);
+        $this->assertSame(['Ada', 'Grace'], $this->db->table('patients')
+            ->where(static fn (QueryBuilder $q) => $q->where('name', 'Ada'))
+            ->orWhere(static fn (QueryBuilder $q) => $q->where('city', 'New York')->where(static fn (QueryBuilder $q) => $q->where('age', 45)))
+            ->orderBy('id')->pluck('name'), 'groups nest');
+
+        $this->expectException(\ArgumentCountError::class);
+        $this->db->table('patients')->where('age');
     }
 
     public function testOrInNullAndLike(): void

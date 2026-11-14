@@ -82,19 +82,42 @@ final class QueryBuilder
 
     /**
      * where('age', 18) means age = 18; where('age', '>=', 18) uses the operator.
+     *
+     * A Closure groups conditions in parentheses (2.20, FE-75); only the
+     * conditions set on the group count:
+     *
+     *     ->where('city', 'London')->where(fn (QueryBuilder $q) => $q->where('age', '<', 18)->orWhere('age', '>', 65))
+     *
+     * @param string|\Closure(self): mixed $column
      */
-    public function where(string $column, mixed $operatorOrValue, mixed $value = null): self
+    public function where(string|\Closure $column, mixed $operatorOrValue = null, mixed $value = null): self
     {
-        return func_num_args() === 2
-            ? $this->addComparison('AND', $column, '=', $operatorOrValue)
-            : $this->addComparison('AND', $column, (string) $operatorOrValue, $value);
+        return $this->addWhere('AND', $column, func_num_args(), $operatorOrValue, $value);
     }
 
-    public function orWhere(string $column, mixed $operatorOrValue, mixed $value = null): self
+    /**
+     * @param string|\Closure(self): mixed $column
+     */
+    public function orWhere(string|\Closure $column, mixed $operatorOrValue = null, mixed $value = null): self
     {
-        return func_num_args() === 2
-            ? $this->addComparison('OR', $column, '=', $operatorOrValue)
-            : $this->addComparison('OR', $column, (string) $operatorOrValue, $value);
+        return $this->addWhere('OR', $column, func_num_args(), $operatorOrValue, $value);
+    }
+
+    /**
+     * A text search where the user's "%", "_" and "!" are plain characters
+     * (2.20, FE-75, S31): where('email', 'like', $input . '%') let a user's
+     * "%" match anything, and escaping by hand differed per database. Adds
+     * ESCAPE '!' on every database. Case follows the database: SQLite and
+     * MySQL's default collations ignore it, PostgreSQL does not.
+     */
+    public function whereLike(string $column, string $text, LikeMatch $match = LikeMatch::Contains): self
+    {
+        return $this->addLike('AND', $column, $text, $match);
+    }
+
+    public function orWhereLike(string $column, string $text, LikeMatch $match = LikeMatch::Contains): self
+    {
+        return $this->addLike('OR', $column, $text, $match);
     }
 
     /**
@@ -485,6 +508,36 @@ final class QueryBuilder
         }
 
         return [$sql, $bindings];
+    }
+
+    /**
+     * @param string|\Closure(self): mixed $column
+     */
+    private function addWhere(string $boolean, string|\Closure $column, int $arguments, mixed $operatorOrValue, mixed $value): self
+    {
+        if ($column instanceof \Closure) {
+            $group = new self($this->connection, $this->table);
+            $column($group);
+            if ($group->wheres !== []) {
+                [$sql, $bindings] = $group->compileWheres();
+                $this->wheres[] = ['boolean' => $boolean, 'sql' => '(' . substr($sql, strlen(' WHERE ')) . ')', 'bindings' => $bindings];
+            }
+
+            return $this;
+        }
+
+        return match ($arguments) {
+            1 => throw new \ArgumentCountError("where('{$column}') needs a value, or an operator and a value."),
+            2 => $this->addComparison($boolean, $column, '=', $operatorOrValue),
+            default => $this->addComparison($boolean, $column, is_scalar($operatorOrValue) ? (string) $operatorOrValue : get_debug_type($operatorOrValue), $value),
+        };
+    }
+
+    private function addLike(string $boolean, string $column, string $text, LikeMatch $match): self
+    {
+        $this->wheres[] = ['boolean' => $boolean, 'sql' => $this->wrap($column) . " LIKE ? ESCAPE '!'", 'bindings' => [$match->pattern($text)]];
+
+        return $this;
     }
 
     private function addComparison(string $boolean, string $column, string $operator, mixed $value): self

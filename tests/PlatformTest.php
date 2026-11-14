@@ -11,6 +11,7 @@ use Zana\Database\ConnectionInterface;
 use Zana\Database\DatabaseException;
 use Zana\Database\DbalConnection;
 use Zana\Database\Grammar\PlatformGrammar;
+use Zana\Database\Query\LikeMatch;
 use Zana\Database\Schema\Blueprint;
 
 /**
@@ -130,6 +131,44 @@ final class PlatformTest extends TestCase
 
         $this->expectException(DatabaseException::class);
         $db->table('counters')->increment('sold');   // no where clause: refused like update()
+    }
+
+    #[DataProvider('drivers')]
+    public function testWhereLikeTreatsTheUsersWildcardsAsText(string $driver): void
+    {
+        // FE-75, S31: the same rows on every database for "_", "%", "\" and the escape character "!".
+        $db = $this->connect($driver);
+        $db->schema()->create('notes', static function (Blueprint $t): void {
+            $t->id();
+            $t->string('body', 80);
+        });
+        foreach (['jean_pierre@x.org', 'jeanxpierre@x.org', '100% sure', '1000 sure', 'c:\dir\file', 'c:dir', 'wow!', 'wow', 'a!_b', 'a!xb', "it's"] as $body) {
+            $db->table('notes')->insert(['body' => $body]);
+        }
+        $find = static fn (string $text, LikeMatch $match): array => $db->table('notes')->whereLike('body', $text, $match)->orderBy('id')->pluck('body');
+
+        $this->assertSame(['jean_pierre@x.org'], $find('jean_', LikeMatch::StartsWith));
+        $this->assertSame(['100% sure'], $find('%', LikeMatch::Contains));
+        $this->assertSame(['100% sure'], $find('0%', LikeMatch::Contains));
+        $this->assertSame(['c:\dir\file'], $find('\d', LikeMatch::Contains));
+        $this->assertSame(['c:\dir\file'], $find('\file', LikeMatch::EndsWith));
+        $this->assertSame(['wow!'], $find('!', LikeMatch::EndsWith));
+        $this->assertSame(['a!_b'], $find('!_', LikeMatch::Contains));
+        $this->assertSame(["it's"], $find("'", LikeMatch::Contains));
+        $this->assertSame([], $find("' OR 1=1 --", LikeMatch::Contains));
+        $this->assertCount(11, $find('', LikeMatch::Contains), 'an empty search matches every row');
+
+        $grouped = $db->table('notes')
+            ->where('id', '>', 0)
+            ->where(static fn ($q) => $q->whereLike('body', 'jean', LikeMatch::StartsWith)->orWhereLike('body', 'wow', LikeMatch::StartsWith))
+            ->orderBy('id');
+        $this->assertSame(['jean_pierre@x.org', 'jeanxpierre@x.org', 'wow!', 'wow'], $grouped->pluck('body'));
+        $this->assertStringContainsString(" > ? AND (", $grouped->toSql()[0]);
+        $this->assertSame(
+            ['jean_pierre@x.org', 'wow'],
+            $db->table('notes')->where(static fn ($q) => $q->where('body', 'wow')->orWhere('body', 'jean_pierre@x.org'))->orWhere(static fn ($q) => $q)->orderBy('id')->pluck('body'),
+            'an empty group adds nothing',
+        );
     }
 
     #[DataProvider('drivers')]
