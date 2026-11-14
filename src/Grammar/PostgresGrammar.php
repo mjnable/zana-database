@@ -36,6 +36,7 @@ final class PostgresGrammar extends Grammar
             'string' => "VARCHAR({$column->length})",
             'text' => 'TEXT',
             'json' => 'JSONB',
+            'smallInteger' => 'SMALLINT',
             'integer' => 'INTEGER',
             'bigInteger' => 'BIGINT',
             'boolean' => 'BOOLEAN',

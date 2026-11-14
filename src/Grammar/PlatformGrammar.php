@@ -72,7 +72,16 @@ final class PlatformGrammar extends Grammar
             $table->addOption('engine', 'InnoDB')->addOption('charset', 'utf8mb4')->addOption('collation', 'utf8mb4_unicode_ci');
         }
 
-        return $this->platform->getCreateTableSQL($table);
+        $statements = $this->platform->getCreateTableSQL($table);
+        if ($blueprint->checks() !== []) {
+            // DBAL 4 has no CHECK constraints on Table: they join the column list of CREATE TABLE (FE-74).
+            $statements[0] = self::withConstraints($statements[0], array_map(
+                fn (array $check): string => 'CONSTRAINT ' . $this->quote($check[0]) . " CHECK ({$check[1]})",
+                $blueprint->checks(),
+            ));
+        }
+
+        return $statements;
     }
 
     public function compileAlter(Blueprint $blueprint): array
@@ -104,8 +113,70 @@ final class PlatformGrammar extends Grammar
             $this->addColumn($new, $column, $blueprint->table);
         }
         $this->addIndexes($new, $blueprint->indexes());
+        if ($blueprint->checks() !== [] && $this->platform instanceof SQLitePlatform) {
+            throw new \LogicException("SQLite cannot add the check {$blueprint->checks()[0][0]} to the existing table {$blueprint->table}: declare it in create().");
+        }
 
-        return $this->platform->getAlterTableSQL($manager->createComparator()->compareTables($old, $new));
+        $statements = $this->platform->getAlterTableSQL($manager->createComparator()->compareTables($old, $new));
+        if ($this->platform instanceof SQLitePlatform) {
+            $this->refuseLosingConstraints($blueprint->table, $statements);
+        }
+        foreach ($blueprint->checks() as [$name, $expression]) {
+            $statements[] = 'ALTER TABLE ' . $this->quote($blueprint->table) . ' ADD CONSTRAINT ' . $this->quote($name) . " CHECK ({$expression})";
+        }
+
+        return $statements;
+    }
+
+    /**
+     * SQLite changes most things by copying the table into a new one, which
+     * DBAL builds from the columns and indexes alone: the table's CHECK
+     * constraints and triggers would be dropped without a word (2.20, FE-74).
+     *
+     * @param list<string> $statements
+     */
+    private function refuseLosingConstraints(string $table, array $statements): void
+    {
+        $rebuilt = array_filter($statements, static fn (string $sql): bool => preg_match('/^DROP TABLE\s/i', $sql) === 1 && !str_contains($sql, '__temp__'));
+        if ($rebuilt === []) {
+            return;
+        }
+        $sql = $this->connection->fetchOne("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", [$table]);
+        $triggers = (int) $this->connection->fetchOne("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ?", [$table]);
+        $checks = is_string($sql) && preg_match('/\bCHECK\s*\(/i', $sql) === 1;
+        if ($checks || $triggers > 0) {
+            throw new \LogicException(
+                "On SQLite, this change to {$table} rebuilds the table, which would drop its "
+                . ($checks ? 'CHECK constraints' : '') . ($checks && $triggers > 0 ? ' and ' : '') . ($triggers > 0 ? 'triggers' : '')
+                . '. Recreate the table with create() in this migration, or make the change in raw SQL.'
+            );
+        }
+    }
+
+    /**
+     * Adds definitions to the column list of a CREATE TABLE statement: before
+     * the parenthesis that closes it, skipping quoted text and nested ones.
+     *
+     * @param list<string> $definitions
+     */
+    private static function withConstraints(string $create, array $definitions): string
+    {
+        $depth = 0;
+        $quote = null;
+        for ($i = 0, $length = strlen($create); $i < $length; $i++) {
+            $char = $create[$i];
+            if ($quote !== null) {
+                $quote = $char === $quote ? null : $quote;   // a doubled quote leaves and enters again
+            } elseif ($char === "'" || $char === '"' || $char === '`') {
+                $quote = $char;
+            } elseif ($char === '(') {
+                $depth++;
+            } elseif ($char === ')' && --$depth === 0) {
+                return substr($create, 0, $i) . ', ' . implode(', ', $definitions) . substr($create, $i);
+            }
+        }
+
+        throw new \LogicException('The CREATE TABLE statement has no column list.');
     }
 
     public function compileDrop(string $table, bool $ifExists): string
@@ -155,6 +226,7 @@ final class PlatformGrammar extends Grammar
             'string' => [Types::STRING, ['length' => $column->length]],
             'text' => [Types::TEXT, []],
             'json' => [Types::JSON, ['platformOptions' => ['jsonb' => true]]],
+            'smallInteger' => [Types::SMALLINT, []],
             'integer' => [Types::INTEGER, []],
             'bigInteger' => [Types::BIGINT, []],
             'boolean' => [Types::BOOLEAN, []],

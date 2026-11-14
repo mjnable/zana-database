@@ -33,12 +33,21 @@ not change this package is not listed.
 
 ### Added
 
+- `$t->check('name', 'expression')` declares a CHECK constraint, named `{table}_{name}_check`, on PostgreSQL, MySQL
+  and SQLite (FE-74). In `table()` it is added with `ALTER TABLE … ADD CONSTRAINT`, and refused on SQLite, which
+  cannot add a constraint to an existing table.
+- `$t->smallInteger()`: `SMALLINT` on PostgreSQL and MySQL, `INTEGER` on SQLite (FE-74).
+- The `uuid()` docblock and the database guide say to store canonical UUIDs: PostgreSQL returns 32 hexadecimal
+  digits hyphenated, so such an id is not found by its own value there.
 - `where(Closure)` and `orWhere(Closure)` group conditions in parentheses: `->where('city', 'London')->where(fn
   ($q) => $q->where('age', '<', 18)->orWhere('age', '>', 65))` (FE-75). Groups nest; an empty group adds nothing.
   `where('age')` with no value now throws `ArgumentCountError` with a message, as before but clearer.
 
 ### Changed
 
+- On SQLite, `table()` refuses a change that makes DBAL rebuild the table (adding an index, dropping a column) when
+  the table has CHECK constraints or triggers: the rebuilt table kept only the columns and indexes, and the
+  constraints were dropped without a word. Adding a nullable column needs no rebuild and still works.
 - `scalar()` returns `false` for a false value and `null` only when there is no row or the value is SQL `NULL`
   (FE-79). Before, `scalar('SELECT false')` returned `null` on PostgreSQL, the same as no row, so `=== false` never
   matched. SQLite and MySQL return `0` and `1`, as before. Code that read a PostgreSQL boolean with `=== null` for

@@ -134,6 +134,68 @@ final class PlatformTest extends TestCase
     }
 
     #[DataProvider('drivers')]
+    public function testCheckConstraintsAndSmallIntegers(string $driver): void
+    {
+        // FE-74: the database refuses a row that breaks the invariant, whatever the code does.
+        $db = $this->connect($driver);
+        $db->schema()->create('scores', static function (Blueprint $t): void {
+            $t->id();
+            $t->smallInteger('score');
+            $t->integer('sold')->default(0);
+            $t->integer('quantity');
+            $t->string('label', 40)->default("a ) 'quoted' ( default");
+            $t->check('score_range', 'score BETWEEN 1 AND 5');
+            $t->check('sold_within_quantity', 'sold <= quantity');
+        });
+        $db->table('scores')->insert(['score' => 5, 'sold' => 2, 'quantity' => 2]);
+        $this->assertSame("a ) 'quoted' ( default", $db->table('scores')->value('label'), 'quoted parentheses in a default are left alone');
+
+        foreach ([['score' => 6, 'quantity' => 1], ['score' => 0, 'quantity' => 1], ['score' => 3, 'sold' => 3, 'quantity' => 2]] as $row) {
+            try {
+                $db->table('scores')->insert($row);
+                $this->fail('the database accepted ' . json_encode($row));
+            } catch (DatabaseException $e) {
+                $this->assertMatchesRegularExpression('/check|constraint/i', $e->getMessage());
+            }
+        }
+        $this->assertSame(1, $db->table('scores')->count());
+
+        if ($driver === 'sqlite') {
+            try {
+                $db->schema()->table('scores', static fn (Blueprint $t) => $t->check('positive', 'quantity > 0'));
+                $this->fail('SQLite cannot add a constraint to an existing table');
+            } catch (\LogicException $e) {
+                $this->assertStringContainsString('declare it in create()', $e->getMessage());
+            }
+            try {
+                $db->schema()->table('scores', static fn (Blueprint $t) => $t->index('sold'));
+                $this->fail('the rebuild would drop the checks');
+            } catch (\LogicException $e) {
+                $this->assertStringContainsString('would drop its CHECK constraints', $e->getMessage());
+            }
+            $db->schema()->table('scores', static fn (Blueprint $t) => $t->integer('extra')->nullable());   // ADD COLUMN, no rebuild
+            $this->expectException(DatabaseException::class);
+            $db->table('scores')->insert(['score' => 9, 'quantity' => 1]);
+
+            return;
+        }
+
+        $db->schema()->table('scores', static fn (Blueprint $t) => $t->check('positive', 'quantity > 0'));
+        try {
+            $db->table('scores')->insert(['score' => 1, 'quantity' => 0]);
+            $this->fail('the added check holds');
+        } catch (DatabaseException) {
+            $this->addToAssertionCount(1);
+        }
+        try {
+            $db->table('scores')->insert(['score' => 40_000, 'quantity' => 1]);
+            $this->fail('a 2-byte column refuses 40000');
+        } catch (DatabaseException $e) {
+            $this->assertMatchesRegularExpression('/range|out of/i', $e->getMessage());
+        }
+    }
+
+    #[DataProvider('drivers')]
     public function testWhereLikeTreatsTheUsersWildcardsAsText(string $driver): void
     {
         // FE-75, S31: the same rows on every database for "_", "%", "\" and the escape character "!".
@@ -259,7 +321,7 @@ final class PlatformTest extends TestCase
     private function connect(string $driver): ConnectionInterface
     {
         $db = ConnectionFactory::create($this->settings($driver));
-        foreach (['kinds', 'events', 'counters', 'notes'] as $table) {
+        foreach (['kinds', 'events', 'counters', 'notes', 'scores'] as $table) {
             $db->schema()->dropIfExists($table);
         }
 

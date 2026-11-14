@@ -61,6 +61,7 @@ final class MysqlGrammar extends Grammar
             'string' => "VARCHAR({$column->length})",
             'text' => 'TEXT',
             'json' => 'JSON',
+            'smallInteger' => 'SMALLINT',
             'integer' => 'INT',
             'bigInteger' => 'BIGINT',
             'boolean' => 'TINYINT(1)',

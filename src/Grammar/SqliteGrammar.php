@@ -34,6 +34,11 @@ final class SqliteGrammar extends Grammar
         return '`' . str_replace('`', '``', $identifier) . '`';
     }
 
+    protected function canAddConstraints(): bool
+    {
+        return false;
+    }
+
     protected function type(ColumnDefinition $column): string
     {
         return match ($column->type) {
@@ -41,7 +46,7 @@ final class SqliteGrammar extends Grammar
             'uuid' => 'CHAR(36)',
             'string' => "VARCHAR({$column->length})",
             'text', 'json' => 'TEXT',
-            'integer', 'bigInteger', 'boolean' => 'INTEGER',
+            'smallInteger', 'integer', 'bigInteger', 'boolean' => 'INTEGER',
             'decimal' => "NUMERIC({$column->precision}, {$column->scale})",
             'float' => 'REAL',
             'date' => 'DATE',

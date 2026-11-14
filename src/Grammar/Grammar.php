@@ -107,6 +107,9 @@ abstract class Grammar
     public function compileCreate(Blueprint $blueprint): array
     {
         $definitions = array_map(fn (ColumnDefinition $c): string => $this->column($c), $blueprint->columns());
+        foreach ($blueprint->checks() as [$name, $expression]) {
+            $definitions[] = 'CONSTRAINT ' . $this->quote($name) . " CHECK ({$expression})";
+        }
 
         foreach ($blueprint->foreignKeys() as $foreign) {
             $definitions[] = sprintf(
@@ -186,6 +189,12 @@ abstract class Grammar
                 implode(', ', array_map($this->wrap(...), $columns))
             );
         }
+        foreach ($blueprint->checks() as [$name, $expression]) {
+            if (!$this->canAddConstraints()) {
+                throw new \LogicException("SQLite cannot add the check {$name} to the existing table {$blueprint->table}: declare it in create().");
+            }
+            $statements[] = "ALTER TABLE {$table} ADD CONSTRAINT " . $this->quote($name) . " CHECK ({$expression})";
+        }
 
         return $statements;
     }
@@ -218,6 +227,14 @@ abstract class Grammar
     protected function tableOptions(): string
     {
         return '';
+    }
+
+    /**
+     * Whether ALTER TABLE … ADD CONSTRAINT works: not on SQLite.
+     */
+    protected function canAddConstraints(): bool
+    {
+        return true;
     }
 
     /**

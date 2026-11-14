@@ -24,6 +24,9 @@ final class Blueprint
     /** @var list<string> */
     private array $droppedIndexes = [];
 
+    /** @var list<array{string, string}> */
+    private array $checks = [];
+
     public function __construct(public readonly string $table)
     {
     }
@@ -36,6 +39,12 @@ final class Blueprint
         return $this->add(new ColumnDefinition($name, 'id'));
     }
 
+    /**
+     * A UUID: `uuid` on PostgreSQL, text elsewhere. Store canonical UUIDs
+     * (Uuid::v7()): PostgreSQL also accepts 32 hexadecimal digits and returns
+     * them hyphenated, so an id stored as bin2hex(random_bytes(16)) is not
+     * found by its own value there, while SQLite finds it (FE-74).
+     */
     public function uuid(string $name): ColumnDefinition
     {
         return $this->add(new ColumnDefinition($name, 'uuid'));
@@ -51,9 +60,49 @@ final class Blueprint
         return $this->add(new ColumnDefinition($name, 'text'));
     }
 
+    /**
+     * A 2-byte integer where the database has one (2.20, FE-74): SMALLINT on
+     * PostgreSQL and MySQL, INTEGER on SQLite.
+     */
+    public function smallInteger(string $name): ColumnDefinition
+    {
+        return $this->add(new ColumnDefinition($name, 'smallInteger'));
+    }
+
     public function integer(string $name): ColumnDefinition
     {
         return $this->add(new ColumnDefinition($name, 'integer'));
+    }
+
+    /**
+     * A CHECK constraint (2.20, FE-74), so an invariant holds in the database
+     * as well as in code. The expression is SQL written by the migration's
+     * author, never by a user; name columns as the database expects them.
+     * The constraint is named "{table}_{name}_check", as MySQL needs names
+     * unique across the schema.
+     *
+     *     $t->check('sold_within_quantity', 'sold <= quantity');
+     *
+     * In table() it is refused on SQLite, which cannot add a constraint to an
+     * existing table.
+     */
+    public function check(string $name, string $expression): void
+    {
+        if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $name) !== 1) {
+            throw new \InvalidArgumentException("The check name \"{$name}\" must be letters, digits and underscores.");
+        }
+        if (trim($expression) === '') {
+            throw new \InvalidArgumentException("The check {$name} needs an expression.");
+        }
+        $this->checks[] = ["{$this->table}_{$name}_check", $expression];
+    }
+
+    /**
+     * @return list<array{string, string}> Each constraint's full name and expression
+     */
+    public function checks(): array
+    {
+        return $this->checks;
     }
 
     public function bigInteger(string $name): ColumnDefinition
