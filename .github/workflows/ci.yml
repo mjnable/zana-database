@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Every day as well, so a release of a dependency that breaks something shows without a commit here.
+  schedule:
+    - cron: '23 3 * * *'
 
 jobs:
   tests:
@@ -56,6 +59,34 @@ jobs:
       - run: git config --global user.name CI && git config --global user.email ci@example.com
       - run: composer update --no-interaction --no-progress
         working-directory: zana-database
+      # MySQL 8 makes its own certificates: its CA is copied out of the service. PostgreSQL needs a certificate before it
+      # starts, so one is issued by a test CA and a second PostgreSQL with TLS is started on 5433, as tls-server.md says.
+      - name: TLS servers
+        run: |
+          set -e
+          tls="$RUNNER_TEMP/tls"
+          mkdir -p "$tls" && cd "$tls"
+          docker cp "${{ job.services.mysql.id }}:/var/lib/mysql/ca.pem" mysql-ca.pem
+          openssl req -x509 -newkey rsa:2048 -nodes -days 2 -keyout ca.key -out ca.pem -subj "/CN=Zana test CA"
+          openssl req -newkey rsa:2048 -nodes -keyout server.key -out server.csr -subj "/CN=localhost"
+          printf 'subjectAltName=DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth\n' > san.ext
+          openssl x509 -req -in server.csr -CA ca.pem -CAkey ca.key -CAcreateserial -out server.crt -days 2 -extfile san.ext
+          openssl req -x509 -newkey rsa:2048 -nodes -days 2 -keyout other-ca.key -out other-ca.pem -subj "/CN=Another CA"
+          # PostgreSQL reads its key only when the postgres user (999 in the image) owns it, readable by no one else.
+          sudo chown 999:999 server.crt server.key && sudo chmod 600 server.key
+          docker run -d --name postgres-tls -p 5433:5432 -e POSTGRES_HOST_AUTH_METHOD=trust \
+            -v "$tls/server.crt:/tls/server.crt:ro" -v "$tls/server.key:/tls/server.key:ro" \
+            postgres:17 -c ssl=on -c ssl_cert_file=/tls/server.crt -c ssl_key_file=/tls/server.key
+          for attempt in $(seq 1 30); do
+            docker exec postgres-tls pg_isready -U postgres -h 127.0.0.1 && break
+            sleep 2
+          done
+          {
+            echo "ZANA_TEST_MYSQL_TLS_CA=$tls/mysql-ca.pem"
+            echo "ZANA_TEST_PGSQL_TLS_PORT=5433"
+            echo "ZANA_TEST_PGSQL_TLS_CA=$tls/ca.pem"
+            echo "ZANA_TEST_TLS_OTHER_CA=$tls/other-ca.pem"
+          } >> "$GITHUB_ENV"
       - name: PHPUnit
         working-directory: zana-database
         run: |
@@ -67,6 +98,13 @@ jobs:
         run: |
           if grep -E "is not reachable|pdo_(mysql|pgsql) is not loaded" phpunit.out; then
             echo "::error::Database tests were skipped: the MySQL or PostgreSQL service did not answer."
+            exit 1
+          fi
+      - name: Every TLS test ran
+        working-directory: zana-database
+        run: |
+          if grep -E "No PostgreSQL with TLS|No MySQL CA" phpunit.out; then
+            echo "::error::TLS tests were skipped: the TLS servers did not start."
             exit 1
           fi
       - name: PHPStan
