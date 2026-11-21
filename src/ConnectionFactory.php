@@ -49,6 +49,9 @@ final class ConnectionFactory
         if ($driver === 'pgsql') {
             $params += self::pgsqlTls($config);
         }
+        if ($driver === 'sqlite') {
+            self::sqliteDirectory($string('database', ':memory:'));
+        }
 
         try {
             $connection = DriverManager::getConnection($params);
@@ -89,6 +92,10 @@ final class ConnectionFactory
             default => throw new DatabaseException("Unknown database driver: \"{$driver}\". Use sqlite, mysql or pgsql."),
         };
 
+        if ($driver === 'sqlite') {
+            self::sqliteDirectory($string('database', ':memory:'));
+        }
+
         try {
             $pdo = new \PDO($dsn, $string('username') ?: null, $string('password') ?: null, $options);
         } catch (\PDOException $e) {
@@ -102,7 +109,30 @@ final class ConnectionFactory
         return new Connection($pdo);
     }
 
-    private const array SSL_MODES = ['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full'];
+    /**
+     * SQLite makes its file, but not the folder it goes in: a fresh project
+     * has no var/, so its first migrate failed with "unable to open database
+     * file" (2.27.1). The folder is made, as the cache and log stores make
+     * theirs. Not for the in-memory database, an empty path (a temporary
+     * database) or a file: URI.
+     *
+     * @throws DatabaseException
+     */
+    private static function sqliteDirectory(string $path): void
+    {
+        if ($path === '' || $path === ':memory:' || str_starts_with($path, 'file:')) {
+            return;
+        }
+        if (str_contains($path, "\0")) {
+            throw new DatabaseException('Cannot connect to the sqlite database: its path contains a NUL byte.');
+        }
+        $directory = dirname($path);
+        if (!is_dir($directory) && !@mkdir($directory, 0775, true) && !is_dir($directory)) {
+            throw new DatabaseException("Cannot connect to the sqlite database: the folder {$directory} does not exist, and could not be made.");
+        }
+    }
+
+    private const array SSL_MODES =['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full'];
 
     /**
      * @param array<string, mixed> $config

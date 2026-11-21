@@ -146,9 +146,10 @@ final class ConnectionTest extends TestCase
             $this->assertStringContainsString('Unknown database driver: "oracle"', $e->getMessage());
         }
 
+        // A missing folder is made since 2.27.1, so: a folder that cannot be, under this file.
         $this->expectException(DatabaseException::class);
         $this->expectExceptionMessage('Cannot connect to the sqlite database');
-        ConnectionFactory::create(['driver' => 'sqlite', 'database' => '/definitely/missing/dir/db.sqlite']);
+        ConnectionFactory::create(['driver' => 'sqlite', 'database' => __FILE__ . '/dir/db.sqlite']);
     }
 
     public function testForeignKeysAreEnforcedOnSqlite(): void
@@ -183,6 +184,52 @@ final class ConnectionTest extends TestCase
         unset($manager);
         gc_collect_cycles();
         @unlink("{$base}/bmi.sqlite");
+        @rmdir($base);
+    }
+
+    /**
+     * 2.27.1: a fresh API skeleton has no var/, so its first migrate failed with "unable to open database file".
+     */
+    public function testTheFolderOfASqliteFileIsMadeWhenMissing(): void
+    {
+        $base = sys_get_temp_dir() . '/zana-db-' . bin2hex(random_bytes(4));
+        mkdir($base);
+        $manager = new DatabaseManager(new Configuration(['database' => [
+            'default' => 'main',
+            'connections' => ['main' => ['driver' => 'sqlite', 'database' => 'var/data/app.sqlite']],
+        ]]), $base);
+
+        $manager->connection()->execute('CREATE TABLE t (id INTEGER)');
+        $this->assertFileExists("{$base}/var/data/app.sqlite", 'both missing folders made, relative to the application');
+
+        $pdo = ConnectionFactory::createPdo(['driver' => 'sqlite', 'database' => "{$base}/old/app.sqlite"]);
+        $pdo->execute('CREATE TABLE t (id INTEGER)');
+        $this->assertFileExists("{$base}/old/app.sqlite", 'the deprecated PDO connection too');
+
+        // A file where the folder should be: refused, with the folder named, not "unable to open database file".
+        file_put_contents("{$base}/taken", '');
+        try {
+            ConnectionFactory::create(['driver' => 'sqlite', 'database' => "{$base}/taken/app.sqlite"]);
+            $this->fail('A folder that cannot be made must fail.');
+        } catch (DatabaseException $e) {
+            $this->assertSame("Cannot connect to the sqlite database: the folder {$base}/taken does not exist, and could not be made.", $e->getMessage());
+        }
+
+        try {
+            ConnectionFactory::create(['driver' => 'sqlite', 'database' => "{$base}/nul\0x/app.sqlite"]);
+            $this->fail('A NUL byte in the path must fail.');
+        } catch (DatabaseException $e) {
+            $this->assertSame('Cannot connect to the sqlite database: its path contains a NUL byte.', $e->getMessage(), 'not a ValueError from mkdir()');
+        }
+
+        unset($manager, $pdo);
+        gc_collect_cycles();
+        @unlink("{$base}/var/data/app.sqlite");
+        @unlink("{$base}/old/app.sqlite");
+        @unlink("{$base}/taken");
+        @rmdir("{$base}/var/data");
+        @rmdir("{$base}/var");
+        @rmdir("{$base}/old");
         @rmdir($base);
     }
 

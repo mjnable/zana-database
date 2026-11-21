@@ -349,7 +349,9 @@ final class SchemaAndMigrationTest extends TestCase
     {
         $base = $this->directory();
         mkdir("{$base}/config");
-        file_put_contents("{$base}/config/database.php", "<?php return ['connections' => ['main' => ['driver' => 'sqlite', 'database' => " . var_export("{$base}/missing/folder/app.sqlite", true) . "]]];");
+        // A missing folder is made since 2.27.1: a file stands where the folder should be.
+        file_put_contents("{$base}/taken", '');
+        file_put_contents("{$base}/config/database.php", "<?php return ['connections' => ['main' => ['driver' => 'sqlite', 'database' => " . var_export("{$base}/taken/app.sqlite", true) . "]]];");
         $app = Application::configure($base)->withProviders(DatabaseServiceProvider::class)->build();
         $check = $app->container()->get(MigrationsCheck::class);
         assert($check instanceof MigrationsCheck);

@@ -3,6 +3,16 @@
 All Zana packages share one version number and are released together. A release that did
 not change this package is not listed.
 
+## 2.27.1 — 2026-11-21
+
+### Fixed
+
+- A SQLite database's folder is made when it is missing, as the cache and log stores make theirs. A fresh API
+  skeleton has no `var/`, so the README's first `php bin/console migrate` failed with "unable to open database file",
+  as it did on 2.26.0. A folder that cannot be made, for example because a file stands in its place, is
+  named in the error. A path with a NUL byte is a `DatabaseException`, not a `ValueError`. The in-memory database,
+  an empty path and `file:` URIs are left as they were.
+
 ## 2.20.0 — 2026-11-14
 
 ### Security
