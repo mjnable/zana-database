@@ -479,10 +479,12 @@ final class DoctrineMigrationsTest extends TestCase
             ->get(ConsoleKernel::class);
         assert($kernel instanceof ConsoleKernel);
 
-        $output = $this->console($kernel, ['command' => 'migrate']);
+        $output = new BufferedOutput();
+        $status = $kernel->run(new ArrayInput(['command' => 'migrate']), $output);
 
-        $this->assertStringContainsString('Checked the rows.', $output);
-        $this->assertStringContainsString('failed (up)', $output);
+        // The error itself is wrapped at the terminal's width, even inside a word: only its exit code is asserted.
+        $this->assertNotSame(0, $status, 'the command failed');
+        $this->assertStringContainsString('Checked the rows.', $output->fetch());
     }
 
     public function testAGeneratedSchemaMigrationIsTransactionalExceptOnMysqlAndMariadb(): void
