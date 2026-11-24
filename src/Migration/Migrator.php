@@ -4,26 +4,72 @@ declare(strict_types=1);
 
 namespace Zana\Database\Migration;
 
+use Doctrine\Common\EventManager;
+use Doctrine\Migrations\AbstractMigration;
+use Doctrine\Migrations\Configuration\Configuration;
+use Doctrine\Migrations\Configuration\Connection\ExistingConnection;
+use Doctrine\Migrations\Configuration\Migration\ExistingConfiguration;
+use Doctrine\Migrations\DependencyFactory;
+use Doctrine\Migrations\EventDispatcher;
+use Doctrine\Migrations\Events;
+use Doctrine\Migrations\Metadata\MigrationPlanList;
+use Doctrine\Migrations\Metadata\Storage\MetadataStorage;
+use Doctrine\Migrations\MigrationsRepository;
+use Doctrine\Migrations\MigratorConfiguration;
+use Doctrine\Migrations\Version\Comparator;
+use Doctrine\Migrations\Version\Direction;
+use Doctrine\Migrations\Version\Version;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 use Zana\Database\ConnectionInterface;
+use Zana\Database\DbalConnection;
+use Zana\Database\Migration\Doctrine\Chronological;
+use Zana\Database\Migration\Doctrine\DryRuns;
+use Zana\Database\Migration\Doctrine\ImplicitCommits;
+use Zana\Database\Migration\Doctrine\Messages;
+use Zana\Database\Migration\Doctrine\Migrations;
+use Zana\Database\Migration\Doctrine\MigrationTable;
 
 /**
- * Runs migrations from several directories in file-name order.
+ * Runs the migrations of several directories, in the order of the date in their name, on Doctrine Migrations
+ * (ADR-035). Two kinds live side by side:
  *
- * A batch runs in one transaction where the driver supports transactional
- * DDL (SQLite, PostgreSQL); on MySQL a failed migration leaves earlier ones applied.
+ * - Zana files, YYYY_MM_DD_HHMMSS_description.php returning a Migration, as before 2.37;
+ * - Doctrine classes, VersionYYYYMMDDHHMMSS.php extending Doctrine\Migrations\AbstractMigration.
+ *
+ * zana_migrations stays the record, so what ran before 2.37 is known. migrate() runs the pending migrations as one
+ * batch, and rollback() reverts the last batches, newest first.
+ *
+ * Transactions: where DDL is transactional (SQLite, PostgreSQL) a batch runs in one transaction when every migration
+ * in it is transactional. Otherwise each transactional migration (a Doctrine class, by default) runs in its own,
+ * with its row in zana_migrations. On MySQL and MariaDB a schema change commits the transaction: a Zana file runs
+ * without one, and a failed migration leaves the earlier ones applied.
+ *
+ * A rollback over a migration with no down() is refused before anything runs. On a connection that is not a
+ * DbalConnection, the migrator of 2.36 runs Zana files only.
  */
-final readonly class Migrator
+final class Migrator
 {
-    private const FILE_NAME = '/^\d{4}_\d{2}_\d{2}_\d{6}_[a-z0-9_]+$/';
+    private ?DependencyFactory $doctrine = null;
+    private ?Migrations $migrations = null;
+    private ?MigrationTable $table = null;
+    private ?Messages $messages = null;
+    private ?ImplicitCommits $commits = null;
+    private ?PdoMigrator $pdo = null;
 
     /**
      * @param list<string> $paths Directories, e.g. database/migrations and each module's migrations
+     * @param LoggerInterface $logger Where Doctrine's records and what migrations say also go
      */
     public function __construct(
-        private ConnectionInterface $connection,
-        private MigrationRepository $repository,
-        private array $paths,
+        private readonly ConnectionInterface $connection,
+        private readonly MigrationRepository $repository,
+        private readonly array $paths,
+        private readonly LoggerInterface $logger = new NullLogger(),
     ) {
+        if (!$connection instanceof DbalConnection) {
+            $this->pdo = new PdoMigrator($connection, $repository, $paths);
+        }
     }
 
     /**
@@ -33,22 +79,19 @@ final readonly class Migrator
      */
     public function migrate(): array
     {
-        $ran = $this->repository->ran();
-        $pending = array_diff_key($this->files(), $ran);
+        if ($this->pdo !== null) {
+            return $this->pdo->migrate();
+        }
+        $this->files();
+        $this->table()->ensureInitialized();
+        $doctrine = $this->doctrine();
+        $pending = array_map(static fn ($m): Version => $m->getVersion(), $doctrine->getMigrationStatusCalculator()->getNewMigrations()->getItems());
         if ($pending === []) {
             return [];
         }
+        $this->table()->startBatch();
 
-        $batch = $this->repository->lastBatch() + 1;
-
-        $this->inTransaction(function () use ($pending, $batch): void {
-            foreach ($pending as $name => $path) {
-                $this->run($name, $path, 'up');
-                $this->repository->log($name, $batch);
-            }
-        });
-
-        return array_keys($pending);
+        return $this->execute($doctrine->getMigrationPlanCalculator()->getPlanForVersions($pending, Direction::UP));
     }
 
     /**
@@ -58,19 +101,18 @@ final readonly class Migrator
      */
     public function rollback(int $steps = 1): array
     {
+        if ($this->pdo !== null) {
+            return $this->pdo->rollback($steps);
+        }
         $ran = $this->repository->ran();
         if ($ran === []) {
             return [];
         }
-
         $batches = array_values(array_unique($ran));
         rsort($batches);
         $batches = array_slice($batches, 0, max(1, $steps));
 
-        $revert = array_keys(array_filter($ran, static fn (int $batch): bool => in_array($batch, $batches, true)));
-        rsort($revert);
-
-        return $this->revert($revert);
+        return $this->revert(array_keys(array_filter($ran, static fn (int $batch): bool => in_array($batch, $batches, true))));
     }
 
     /**
@@ -80,10 +122,11 @@ final readonly class Migrator
      */
     public function reset(): array
     {
-        $revert = array_keys($this->repository->ran());
-        rsort($revert);
+        if ($this->pdo !== null) {
+            return $this->pdo->reset();
+        }
 
-        return $this->revert($revert);
+        return $this->revert(array_keys($this->repository->ran()));
     }
 
     /**
@@ -91,9 +134,13 @@ final readonly class Migrator
      */
     public function status(): array
     {
+        if ($this->pdo !== null) {
+            return $this->pdo->status();
+        }
         $ran = $this->repository->ran();
-        $names = array_unique([...array_keys($this->files()), ...array_keys($ran)]);
-        sort($names);
+        $names = array_values(array_unique([...array_keys($this->files()), ...array_keys($ran)]));
+        $order = new Chronological();
+        usort($names, static fn (string $a, string $b): int => $order->compare(new Version($a), new Version($b)));
 
         return array_map(static fn (string $name): array => [
             'migration' => $name,
@@ -103,82 +150,166 @@ final readonly class Migrator
     }
 
     /**
-     * Migration files from every path, by name, sorted.
+     * Migration files from every path, by name: a Zana file by its file name, a Doctrine class by its class name.
      *
      * @return array<string, string> name => path
      */
     public function files(): array
     {
-        $files = [];
-        foreach ($this->paths as $path) {
-            foreach (glob(rtrim($path, '/\\') . '/*.php') ?: [] as $file) {
-                $name = pathinfo($file, PATHINFO_FILENAME);
-                if (preg_match(self::FILE_NAME, $name) !== 1) {
-                    throw new MigrationException("Migration file {$file} must be named YYYY_MM_DD_HHMMSS_description.php (lower-case, underscores).");
-                }
-                if (isset($files[$name])) {
-                    throw new MigrationException("Migration {$name} exists in two directories: {$files[$name]} and {$file}.");
-                }
-                $files[$name] = $file;
+        if ($this->pdo !== null) {
+            return $this->pdo->files();
+        }
+        $this->migrations()->refresh();
+
+        return $this->migrations()->files();
+    }
+
+    /**
+     * The migrations that cannot be rolled back: Doctrine classes that do not override down(), such as the data
+     * migrations make:migration --data writes.
+     *
+     * @return list<string>
+     */
+    public function irreversible(): array
+    {
+        if ($this->pdo !== null) {
+            return [];
+        }
+        $this->files();
+        $names = [];
+        foreach ($this->migrations()->getMigrations()->getItems() as $migration) {
+            if (self::withoutDown($migration->getMigration())) {
+                $names[] = (string) $migration->getVersion();
             }
         }
 
-        ksort($files);
+        return $names;
+    }
 
-        return $files;
+    /**
+     * What the migrations of the last operations said (write(), warnIf()), a skipped migration and its reason, and
+     * the migrator's warnings; each is returned once.
+     *
+     * @return list<array{level: string, message: string}>
+     */
+    public function messages(): array
+    {
+        return $this->messages?->take() ?? [];
+    }
+
+    /**
+     * @internal Doctrine's services on this connection, with Zana's record, finder, order and safeguards. Zana exposes
+     * no Doctrine command (ADR-035): this is for its own integrations and tests.
+     */
+    public function doctrine(): DependencyFactory
+    {
+        if ($this->doctrine !== null) {
+            return $this->doctrine;
+        }
+        if (!$this->connection instanceof DbalConnection) {
+            throw new MigrationException('Doctrine Migrations run on the DBAL connection that ConnectionFactory::create() makes.');
+        }
+        $dbal = $this->connection->dbal();
+        $configuration = new Configuration();
+        $configuration->setTransactional(true);
+        $configuration->setCheckDatabasePlatform(false);
+        $this->messages = new Messages($this->logger);
+        $doctrine = DependencyFactory::fromConnection(new ExistingConfiguration($configuration), new ExistingConnection($dbal), $this->messages);
+        $this->migrations = new Migrations($this->paths, $dbal, $this->connection, $this->messages);
+        $this->table = new MigrationTable($this->repository);
+        $this->commits = new ImplicitCommits($dbal, $this->messages);
+        $events = new EventManager();
+        $events->addEventListener([Events::onMigrationsVersionExecuted, Events::onMigrationsVersionSkipped], $this->commits);
+        $events->addEventListener(Events::onMigrationsVersionExecuting, new DryRuns());
+        $doctrine->setService(EventDispatcher::class, new EventDispatcher($dbal, $events));
+        $doctrine->setService(MigrationsRepository::class, $this->migrations);
+        $doctrine->setService(MetadataStorage::class, $this->table);
+        $doctrine->setService(Comparator::class, new Chronological());
+
+        return $this->doctrine = $doctrine;
     }
 
     /**
      * @param list<string> $names
-     * @return list<string>
+     * @return list<string> newest first
      */
     private function revert(array $names): array
     {
         if ($names === []) {
             return [];
         }
-
         $files = $this->files();
-        $this->inTransaction(function () use ($names, $files): void {
-            foreach ($names as $name) {
-                if (!isset($files[$name])) {
-                    throw new MigrationException("Cannot roll back {$name}: its file is missing.");
-                }
-                $this->run($name, $files[$name], 'down');
-                $this->repository->delete($name);
+        foreach ($names as $name) {
+            if (!isset($files[$name])) {
+                throw new MigrationException("Cannot roll back {$name}: its file is missing.");
             }
-        });
+        }
+        $plan = $this->doctrine()->getMigrationPlanCalculator()->getPlanForVersions(array_map(static fn (string $v): Version => new Version($v), $names), Direction::DOWN);
+        // Before any down() runs: on MySQL a batch half rolled back cannot be put back.
+        foreach ($plan->getItems() as $item) {
+            if (self::withoutDown($item->getMigration())) {
+                throw new MigrationException("Cannot roll back {$item->getVersion()}: it has no down(), so it cannot be undone. Nothing was rolled back.");
+            }
+        }
 
-        return $names;
+        return $this->execute($plan);
     }
 
     /**
-     * @param 'up'|'down' $direction
+     * @return list<string> The migrations that ran, without those skipped (skipIf())
      */
-    private function run(string $name, string $path, string $direction): void
+    private function execute(MigrationPlanList $plan): array
     {
-        $migration = (static fn (string $file): mixed => require $file)($path);
-        if (!$migration instanceof Migration) {
-            throw new MigrationException("{$path} must return an instance of " . Migration::class . '.');
+        // Doctrine's all-or-nothing transaction only where DDL is transactional: on MySQL a schema change commits it, and
+        // the savepoint of the migration with it, so a failure would be reported as "SAVEPOINT does not exist".
+        $allOrNothing = $this->connection->grammar()->supportsTransactionalDdl();
+        foreach ($plan->getItems() as $item) {
+            $allOrNothing = $allOrNothing && $item->getMigration()->isTransactional();
         }
-
         try {
-            $migration->{$direction}($this->connection->schema());
+            $this->doctrine()->getMigrator()->migrate($plan, (new MigratorConfiguration())->setAllOrNothing($allOrNothing));
         } catch (MigrationException $e) {
             throw $e;
         } catch (\Throwable $e) {
-            throw new MigrationException("Migration {$name} failed ({$direction}): {$e->getMessage()}", 0, $e);
+            $failed = '?';
+            foreach ($plan->getItems() as $item) {
+                if ($item->getResult() === null || $item->getResult()->hasError()) {
+                    $failed = (string) $item->getVersion();
+                    break;
+                }
+            }
+            $kept = $this->commits?->committed($failed) === true ? ' Its statements before the schema change stay applied: on this database a schema change commits the transaction.' : '';
+            throw new MigrationException("Migration {$failed} failed ({$plan->getDirection()}): {$e->getMessage()}{$kept}", 0, $e);
         }
+
+        $ran = [];
+        foreach ($plan->getItems() as $item) {
+            if ($item->getResult()?->isSkipped() !== true) {
+                $ran[] = (string) $item->getVersion();
+            }
+        }
+
+        return $ran;
     }
 
-    private function inTransaction(\Closure $work): void
+    private static function withoutDown(AbstractMigration $migration): bool
     {
-        if (!$this->connection->grammar()->supportsTransactionalDdl()) {
-            $work();
+        return (new \ReflectionMethod($migration, 'down'))->getDeclaringClass()->getName() === AbstractMigration::class;
+    }
 
-            return;
-        }
+    private function migrations(): Migrations
+    {
+        $this->doctrine();
+        assert($this->migrations !== null);
 
-        $this->connection->transaction(static fn (): mixed => $work());
+        return $this->migrations;
+    }
+
+    private function table(): MigrationTable
+    {
+        $this->doctrine();
+        assert($this->table !== null);
+
+        return $this->table;
     }
 }

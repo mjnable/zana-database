@@ -12,9 +12,15 @@ use Zana\Database\Migration\Migrator;
 #[AsCommand(name: 'migrate', description: 'Run the pending database migrations')]
 final class MigrateCommand extends Command
 {
+    use ShowsMigrationMessages;
+
     public function handle(Migrator $migrator, SymfonyStyle $io): int
     {
-        $ran = $migrator->migrate();
+        try {
+            $ran = $migrator->migrate();
+        } finally {
+            self::showMessages($migrator, $io);
+        }
 
         if ($ran === []) {
             $io->success('Nothing to migrate.');

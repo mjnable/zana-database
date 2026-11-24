@@ -14,6 +14,8 @@ use Zana\Database\Migration\Migrator;
 #[AsCommand(name: 'migrate:rollback', description: 'Roll back the last batch of migrations')]
 final class RollbackCommand extends Command
 {
+    use ShowsMigrationMessages;
+
     protected function configure(): void
     {
         $this->addOption('step', null, InputOption::VALUE_REQUIRED, 'How many batches to roll back', '1');
@@ -28,7 +30,11 @@ final class RollbackCommand extends Command
             return self::INVALID;
         }
 
-        $reverted = $migrator->rollback($step);
+        try {
+            $reverted = $migrator->rollback($step);
+        } finally {
+            self::showMessages($migrator, $io);
+        }
         if ($reverted === []) {
             $io->success('Nothing to roll back.');
 

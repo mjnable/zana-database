@@ -3,6 +3,50 @@
 All Zana packages share one version number and are released together. A release that did
 not change this package is not listed.
 
+## 2.37.0 — unreleased
+
+### Added
+
+- Migrations run on Doctrine Migrations (FE-83, ADR-035), so a migration can change data. `doctrine/migrations` ^3.9
+  is a new dependency. `Migrator` keeps its constructor and its API, so the commands, `check` and `inspect` work as
+  before.
+  - **Existing migrations and their history are kept.** Zana migration files run unchanged, and `zana_migrations`
+    stays the record, batches included. A database migrated by 2.36 shows every migration as ran, and its rollback
+    runs the same `down()`. This was checked on zanabler.com, Siyati's API and MMC, on SQLite, MySQL, MariaDB and
+    PostgreSQL.
+  - **New migrations are Doctrine classes**, `VersionYYYYMMDDHHMMSS extends AbstractMigration`, in the same
+    directories. Both kinds run in the order of the date in their name. A Doctrine class is named by its class with
+    its namespace.
+  - **`make:migration`** writes a Doctrine class. A schema migration is non-transactional on MySQL and MariaDB, where
+    a schema change commits the transaction anyway, and transactional elsewhere. `make:migration <name> --data`
+    writes a data migration, which is transactional on every database and has no `down()`. Each generated class
+    says which kind it is and how to write it.
+  - **`migrate` and `migrate:rollback` show what migrations say** (`write()`, `warnIf()`, a skipped migration's
+    reason), also when one fails. The same messages and Doctrine's errors go to the application's logger when one
+    is registered; Doctrine's progress records and the queries' bound values do not.
+  - **`migrate:status`** has a Rollback column that marks irreversible migrations, and `Migrator::irreversible()`
+    lists them.
+  - **Doctrine's own commands are not registered.** A Doctrine dry run holds back only `addSql()` statements, so it
+    would really run a Zana file, whose schema builder executes at once. If a Doctrine command is ever exposed, a dry
+    run of a Zana file is already refused before it starts.
+
+### Fixed
+
+- On MySQL and MariaDB, a data migration that fails half way leaves no row changed, including after a migration that
+  changed the schema in the same run. A schema change commits the transaction, and DBAL then still counted it as
+  open, so the next migration's transaction was only a savepoint on a connection in autocommit. The migrator now
+  resets the connection after such a migration and warns that its data changes, if it had any, were not atomic. A
+  migration that fails after its own schema change says that its earlier statements stay applied.
+- `migrate:rollback` over a batch that holds a migration with no `down()` is refused before any `down()` runs, and
+  nothing changes. Before, on MySQL, the newer migrations of the batch were rolled back and then it stopped.
+
+### Changed
+
+- `make:migration` writes a Doctrine migration class instead of a Zana migration file.
+- `Migrator` is no longer `readonly`: it builds Doctrine's services on first use. It was already `final`.
+- On a connection that is not a `DbalConnection` (the deprecated `ConnectionFactory::createPdo()`), the migrator of
+  2.36 still runs, for Zana files only. A Doctrine class there is refused, with the reason.
+
 ## 2.27.1 — 2026-11-21
 
 ### Fixed

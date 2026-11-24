@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Zana\Database;
 
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 use Zana\Configuration\ConfigurationInterface;
 use Zana\Console\ConsoleKernel;
 use Zana\Container\Contracts\ServiceCollectionInterface;
@@ -46,8 +48,10 @@ final class DatabaseServiceProvider extends ServiceProvider
                     $paths[] = $module->path('Infrastructure', 'Persistence', 'Migrations');
                 }
 
-                return new Migrator($r->get(ConnectionInterface::class), $r->get(MigrationRepository::class), $paths);
-            })->uses(ApplicationInterface::class, ConnectionInterface::class, MigrationRepository::class);
+                $logger = $r->has(LoggerInterface::class) ? $r->get(LoggerInterface::class) : null;
+
+                return new Migrator($r->get(ConnectionInterface::class), $r->get(MigrationRepository::class), $paths, $logger instanceof LoggerInterface ? $logger : new NullLogger());
+            })->uses(ApplicationInterface::class, ConnectionInterface::class, MigrationRepository::class, LoggerInterface::class);
 
         $services
             ->singleton(MigrationsSection::class, static fn (ServiceResolverInterface $r): MigrationsSection => new MigrationsSection(static fn (): Migrator => self::migrator($r)))->uses(Migrator::class)

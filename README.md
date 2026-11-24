@@ -50,6 +50,57 @@ values.
 
 ## Schema and migrations
 
+Since 2.37, migrations run on [Doctrine Migrations](https://www.doctrine-project.org/projects/migrations.html)
+(ADR-035). New migrations are Doctrine classes, which `make:migration` writes. A schema migration changes
+tables:
+
+```php
+// database/migrations/Version20261124120000.php
+namespace Database\Migrations;
+
+final class Version20261124120000 extends AbstractMigration
+{
+    public function isTransactional(): bool
+    {
+        return !$this->platform instanceof AbstractMySQLPlatform;   // a schema change commits there anyway
+    }
+
+    public function up(Schema $schema): void
+    {
+        $table = $schema->createTable('clinics');
+        $table->addColumn('id', Types::BIGINT, ['autoincrement' => true, 'unsigned' => true]);
+        $table->setPrimaryKey(['id']);
+    }
+
+    public function down(Schema $schema): void
+    {
+        $schema->dropTable('clinics');
+    }
+}
+```
+
+A data migration (`make:migration fix_launch_dates --data`) changes rows, in a transaction on every
+database. It has no `down()`, so it cannot be rolled back:
+
+```php
+final class Version20261124130000 extends AbstractMigration
+{
+    public function up(Schema $schema): void
+    {
+        $found = (int) $this->connection->fetchOne('SELECT COUNT(*) FROM case_studies WHERE summary = ?', [$old]);
+        $this->warnIf($found === 0, 'No case study has the old summary: nothing to change.');
+
+        $this->addSql('UPDATE case_studies SET summary = ? WHERE summary = ?', [$new, $old]);
+    }
+}
+```
+
+Read with `$this->connection`, which runs at once. Write with `addSql()`, which is queued until `up()`
+returns, so after every read. Match the old value, so a database already changed by hand is left alone.
+
+Migration files written before 2.37 keep running unchanged, beside the Doctrine classes, and what ran is
+still recorded in `zana_migrations`:
+
 ```php
 // database/migrations/2026_10_24_120000_create_measurements_table.php
 return new class () extends Migration {
@@ -75,15 +126,27 @@ return new class () extends Migration {
 
 ```
 php bin/zana make:migration create_measurements_table
+php bin/zana make:migration fix_launch_dates --data
 php bin/zana migrate
 php bin/zana migrate:status
 php bin/zana migrate:rollback --step=1
 ```
 
 Migrations come from `database/migrations` and from each module's
-`Infrastructure/Persistence/Migrations`, in file-name order. A batch runs in
-one transaction on SQLite and PostgreSQL. MySQL has no transactional DDL, so
-a failure there leaves the earlier migrations applied.
+`Infrastructure/Persistence/Migrations`, both kinds in the order of the date
+in their name. `migrate` shows what migrations say (`write()`, `warnIf()`).
+
+- **Transactions.** A batch runs in one transaction on SQLite and PostgreSQL.
+  On MySQL and MariaDB a schema change commits the transaction, so a failure
+  leaves the earlier migrations applied. Each data migration still runs in its
+  own transaction there, even after a schema change in the same run. A
+  migration that mixes data and schema cannot be atomic on MySQL, and its error
+  says so.
+- **Rollback.** `migrate:rollback` over a batch that holds a migration with no
+  `down()` is refused before any `down()` runs, and `migrate:status` marks such
+  migrations as irreversible.
+- **Doctrine's own commands** (`migrations:*`) are not registered: Zana's
+  commands, `check` and `inspect` cover the workflow.
 
 ## Unit of work
 

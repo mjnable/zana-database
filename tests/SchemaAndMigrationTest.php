@@ -308,9 +308,10 @@ final class SchemaAndMigrationTest extends TestCase
         $this->assertStringContainsString('Created', $this->console($kernel, ['command' => 'make:migration', 'name' => 'create_clinics_table']));
         $this->assertStringContainsString('may only contain', $this->console($kernel, ['command' => 'make:migration', 'name' => 'Bad Name']));
 
-        $created = glob("{$base}/database/migrations/*_create_clinics_table.php") ?: [];
+        // A Doctrine migration class since 2.37 (ADR-035).
+        $created = glob("{$base}/database/migrations/Version*.php") ?: [];
         $this->assertCount(1, $created);
-        $this->assertStringContainsString("create('clinics'", (string) file_get_contents($created[0]));
+        $this->assertStringContainsString("createTable('clinics')", (string) file_get_contents($created[0]));
         $this->assertStringContainsString('Ran 2 migrations', $this->console($kernel, ['command' => 'migrate']), 'the generated migration runs');
 
         $scope = $container->createScope();
