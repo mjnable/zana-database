@@ -147,6 +147,11 @@ in their name. `migrate` shows what migrations say (`write()`, `warnIf()`).
   migrations as irreversible.
 - **Doctrine's own commands** (`migrations:*`) are not registered: Zana's
   commands, `check` and `inspect` cover the workflow.
+- **Identity.** A Doctrine migration is recorded by its class name with its
+  namespace. Never move or rename one that has run: it would run again as a
+  new migration.
+- **One run at a time.** Two `migrate` runs on one database at the same moment
+  are not serialized: run migrations from one deployment step only.
 
 ## Unit of work
 

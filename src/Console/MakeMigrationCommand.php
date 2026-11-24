@@ -44,6 +44,9 @@ final class MakeMigrationCommand extends Command
          * It runs in a transaction where a schema change can be undone (SQLite, PostgreSQL), and without one on MySQL
          * and MariaDB, where a schema change commits the transaction anyway. Data changed here could therefore not be
          * undone on those databases: change data in a migration of its own, `make:migration <name> --data`.
+         *
+         * Once it has run, never rename this class or change its namespace: it is recorded by that name, and would run
+         * again as a new migration.
          */
         final class %2$s extends AbstractMigration
         {
@@ -97,6 +100,9 @@ final class MakeMigrationCommand extends Command
          *   today's code, not the schema of this migration's time.
          * - Content kept with revisions (audit_revisions) gets its revisions here too, as an editor's change would.
          * - A correction of content a seed writes goes in the seed too, so a new database has it.
+         *
+         * Once it has run, never rename this class or change its namespace: it is recorded by that name, and would run
+         * again as a new migration.
          */
         final class %2$s extends AbstractMigration
         {
@@ -137,6 +143,11 @@ final class MakeMigrationCommand extends Command
         }
 
         $relative = trim(str_replace('\\', '/', (string) $input->getOption('path')), '/');
+        if ($relative === '' || preg_match('#(^|/)\.\.?(/|$)|:|\x00#', $relative) === 1) {
+            $io->error('--path must be a directory inside the project, relative to its base path, e.g. database/migrations.');
+
+            return self::INVALID;
+        }
         $directory = $app->path($relative);
         if (!is_dir($directory) && !mkdir($directory, 0775, true) && !is_dir($directory)) {
             $io->error("Cannot create {$directory}.");

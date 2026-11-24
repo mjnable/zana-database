@@ -47,6 +47,22 @@ not change this package is not listed.
 - On a connection that is not a `DbalConnection` (the deprecated `ConnectionFactory::createPdo()`), the migrator of
   2.36 still runs, for Zana files only. A Doctrine class there is refused, with the reason.
 
+### Security
+
+- `make:migration --path` takes a directory inside the project only: `..`, `.`, a drive letter and a NUL byte are
+  refused. Before, `--path=../outside` wrote the file outside the project.
+
+### Known limits
+
+- **Run one `migrate` at a time.** Two at the same moment on one database are not serialized, as before 2.37: run
+  migrations from one deployment step only.
+- **A Doctrine migration is known by its class name with its namespace.** Moving or renaming a class that has run
+  makes it a new, pending migration, and its old row a migration whose file is gone.
+- **The generated schema migration uses DBAL's schema objects** (`createTable()`, `addColumn()`, `setPrimaryKey()`),
+  which DBAL 4.5 deprecates in favour of editors that Doctrine Migrations 3.9 cannot yet pass to `up()`. They work,
+  and report the deprecation only when Doctrine's deprecations are enabled. The stub changes when Doctrine Migrations
+  supports the replacement.
+
 ## 2.27.1 — 2026-11-21
 
 ### Fixed

@@ -333,6 +333,27 @@ final class DoctrineMigrationsTest extends TestCase
         $this->assertStringNotContainsString('system(', $code);
     }
 
+    public function testMakeMigrationWritesOnlyInsideTheProject(): void
+    {
+        $root = $this->directory();
+        $base = "{$root}/project";
+        mkdir("{$base}/config", 0777, true);
+        file_put_contents("{$base}/config/database.php", "<?php return ['connections' => ['main' => ['driver' => 'sqlite', 'database' => ':memory:']]];");
+        $kernel = Application::configure($base)
+            ->withProviders(ConsoleServiceProvider::class, DatabaseServiceProvider::class)
+            ->build()
+            ->container()
+            ->get(ConsoleKernel::class);
+        assert($kernel instanceof ConsoleKernel);
+
+        foreach (['../outside', 'database/../../outside', '..', '.', './x', 'C:/outside', '', "a\0b"] as $path) {
+            $this->assertStringContainsString('--path must be a directory inside the project', $this->console($kernel, ['command' => 'make:migration', 'name' => 'x', '--path' => $path]), json_encode($path) ?: '');
+        }
+
+        $this->assertSame(['project'], array_map('basename', glob("{$root}/*") ?: []), 'nothing was written outside the project');
+        $this->assertSame(['config'], array_map('basename', glob("{$base}/*") ?: []));
+    }
+
     public function testWhatAMigrationSaysIsShownAsPlainText(): void
     {
         $base = $this->directory();
@@ -403,7 +424,8 @@ final class DoctrineMigrationsTest extends TestCase
         $base = $this->directory();
         mkdir("{$base}/config");
         file_put_contents("{$base}/config/database.php", "<?php return ['connections' => ['main' => ['driver' => 'sqlite', 'database' => ':memory:']]];");
-        file_put_contents("{$base}/composer.json", json_encode(['autoload' => ['psr-4' => ['App\\' => 'src/']]]));
+        // database/ gets a namespace of this test's own: another test makes Database\Migrations\Version<now> in this process.
+        file_put_contents("{$base}/composer.json", json_encode(['autoload' => ['psr-4' => ['App\\' => 'src/', "{$this->namespace}\\" => 'database/']]]));
         mkdir("{$base}/database/migrations", 0777, true);
         $this->notesTable("{$base}/database/migrations");
         $kernel = Application::configure($base)
@@ -432,7 +454,7 @@ final class DoctrineMigrationsTest extends TestCase
         $created = array_values(array_diff(glob("{$base}/database/migrations/Version*.php") ?: [], ["{$base}/database/migrations/Version20260102000000.php"]));
         $this->assertCount(1, $created);
         $code = (string) file_get_contents($created[0]);
-        $this->assertStringContainsString("namespace Database\\Migrations;", $code, 'outside PSR-4, the namespace follows the path');
+        $this->assertStringContainsString("namespace {$this->namespace}\\Migrations;", $code);
         $this->assertStringContainsString("createTable('clinics')", $code);
 
         $this->assertStringContainsString('Ran 3 migrations', $this->console($kernel, ['command' => 'migrate']));
