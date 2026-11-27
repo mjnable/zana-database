@@ -139,7 +139,8 @@ final class MigrationLock
         if ($path === '') {
             return true;   // in memory, or a temporary database: one process
         }
-        $file = fopen($path . '.migrate-lock', 'c');
+        // "c": opened, created if missing, never truncated: a lock file that is a link to another file changes nothing.
+        $file = @fopen($path . '.migrate-lock', 'c');
         if ($file === false) {
             throw new MigrationException("The migration lock {$path}.migrate-lock cannot be opened. Nothing was run.");
         }
