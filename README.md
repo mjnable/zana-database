@@ -150,8 +150,10 @@ in their name. `migrate` shows what migrations say (`write()`, `warnIf()`).
 - **Identity.** A Doctrine migration is recorded by its class name with its
   namespace. Never move or rename one that has run: it would run again as a
   new migration.
-- **One run at a time.** Two `migrate` runs on one database at the same moment
-  are not serialized: run migrations from one deployment step only.
+- **One run at a time (2.39).** Two `migrate` runs on one database are
+  serialized: the second waits for the first, up to
+  `database.migrations.lock_timeout` seconds (60; `0` does not wait), then
+  finds what is left to run. Past the limit it stops, with nothing run.
 
 ## Unit of work
 

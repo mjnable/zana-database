@@ -50,8 +50,14 @@ final class DatabaseServiceProvider extends ServiceProvider
 
                 $logger = $r->has(LoggerInterface::class) ? $r->get(LoggerInterface::class) : null;
 
-                return new Migrator($r->get(ConnectionInterface::class), $r->get(MigrationRepository::class), $paths, $logger instanceof LoggerInterface ? $logger : new NullLogger());
-            })->uses(ApplicationInterface::class, ConnectionInterface::class, MigrationRepository::class, LoggerInterface::class);
+                return new Migrator(
+                    $r->get(ConnectionInterface::class),
+                    $r->get(MigrationRepository::class),
+                    $paths,
+                    $logger instanceof LoggerInterface ? $logger : new NullLogger(),
+                    $r->get(ConfigurationInterface::class)->int('database.migrations.lock_timeout', 60),
+                );
+            })->uses(ApplicationInterface::class, ConnectionInterface::class, MigrationRepository::class, LoggerInterface::class, ConfigurationInterface::class);
 
         $services
             ->singleton(MigrationsSection::class, static fn (ServiceResolverInterface $r): MigrationsSection => new MigrationsSection(static fn (): Migrator => self::migrator($r)))->uses(Migrator::class)

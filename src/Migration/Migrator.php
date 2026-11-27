@@ -60,20 +60,24 @@ final class Migrator
     /**
      * @param list<string> $paths Directories, e.g. database/migrations and each module's migrations
      * @param LoggerInterface $logger Where Doctrine's records and what migrations say also go
+     * @param int $lockTimeout Seconds a run waits for another on the same database (FE-85); 0 does not wait
      */
     public function __construct(
         private readonly ConnectionInterface $connection,
         private readonly MigrationRepository $repository,
         private readonly array $paths,
         private readonly LoggerInterface $logger = new NullLogger(),
+        private readonly int $lockTimeout = 60,
     ) {
+        new MigrationLock($connection, $lockTimeout);   // a negative timeout is refused here, not at the first run
         if (!$connection instanceof DbalConnection) {
-            $this->pdo = new PdoMigrator($connection, $repository, $paths);
+            $this->pdo = new PdoMigrator($connection, $repository, $paths, $lockTimeout);
         }
     }
 
     /**
-     * Run every pending migration as one new batch.
+     * Run every pending migration as one new batch. Two runs on one database are serialized: what is pending is read
+     * once the lock is held, so a run that waited for another finds what that one left.
      *
      * @return list<string> The migrations that ran
      */
@@ -82,20 +86,23 @@ final class Migrator
         if ($this->pdo !== null) {
             return $this->pdo->migrate();
         }
-        $this->files();
-        $this->table()->ensureInitialized();
-        $doctrine = $this->doctrine();
-        $pending = array_map(static fn ($m): Version => $m->getVersion(), $doctrine->getMigrationStatusCalculator()->getNewMigrations()->getItems());
-        if ($pending === []) {
-            return [];
-        }
-        $this->table()->startBatch();
 
-        return $this->execute($doctrine->getMigrationPlanCalculator()->getPlanForVersions($pending, Direction::UP));
+        return $this->lock()->hold(function (): array {
+            $this->files();
+            $this->table()->ensureInitialized();
+            $doctrine = $this->doctrine();
+            $pending = array_map(static fn ($m): Version => $m->getVersion(), $doctrine->getMigrationStatusCalculator()->getNewMigrations()->getItems());
+            if ($pending === []) {
+                return [];
+            }
+            $this->table()->startBatch();
+
+            return $this->execute($doctrine->getMigrationPlanCalculator()->getPlanForVersions($pending, Direction::UP));
+        });
     }
 
     /**
-     * Revert the last batches, newest migration first.
+     * Revert the last batches, newest migration first, holding the lock as migrate() does.
      *
      * @return list<string> The migrations that were reverted
      */
@@ -104,19 +111,22 @@ final class Migrator
         if ($this->pdo !== null) {
             return $this->pdo->rollback($steps);
         }
-        $ran = $this->repository->ran();
-        if ($ran === []) {
-            return [];
-        }
-        $batches = array_values(array_unique($ran));
-        rsort($batches);
-        $batches = array_slice($batches, 0, max(1, $steps));
 
-        return $this->revert(array_keys(array_filter($ran, static fn (int $batch): bool => in_array($batch, $batches, true))));
+        return $this->lock()->hold(function () use ($steps): array {
+            $ran = $this->repository->ran();
+            if ($ran === []) {
+                return [];
+            }
+            $batches = array_values(array_unique($ran));
+            rsort($batches);
+            $batches = array_slice($batches, 0, max(1, $steps));
+
+            return $this->revert(array_keys(array_filter($ran, static fn (int $batch): bool => in_array($batch, $batches, true))));
+        });
     }
 
     /**
-     * Revert every migration.
+     * Revert every migration, under one lock from the first down() to the last.
      *
      * @return list<string>
      */
@@ -126,7 +136,12 @@ final class Migrator
             return $this->pdo->reset();
         }
 
-        return $this->revert(array_keys($this->repository->ran()));
+        return $this->lock()->hold(fn (): array => $this->revert(array_keys($this->repository->ran())));
+    }
+
+    private function lock(): MigrationLock
+    {
+        return new MigrationLock($this->connection, $this->lockTimeout);
     }
 
     /**

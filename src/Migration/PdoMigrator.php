@@ -19,20 +19,51 @@ final readonly class PdoMigrator
 
     /**
      * @param list<string> $paths Directories, e.g. database/migrations and each module's migrations
+     * @param int $lockTimeout Seconds a run waits for another on the same database (FE-85); 0 does not wait
      */
     public function __construct(
         private ConnectionInterface $connection,
         private MigrationRepository $repository,
         private array $paths,
+        private int $lockTimeout = 60,
     ) {
     }
 
     /**
-     * Run every pending migration as one new batch.
+     * Run every pending migration as one new batch, holding the migration lock (FE-85), as each operation does.
      *
      * @return list<string> The migrations that ran
      */
     public function migrate(): array
+    {
+        return $this->lock()->hold($this->migrateHeld(...));
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function rollback(int $steps = 1): array
+    {
+        return $this->lock()->hold(fn (): array => $this->rollbackHeld($steps));
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function reset(): array
+    {
+        return $this->lock()->hold($this->resetHeld(...));
+    }
+
+    private function lock(): MigrationLock
+    {
+        return new MigrationLock($this->connection, $this->lockTimeout);
+    }
+
+    /**
+     * @return list<string> The migrations that ran
+     */
+    private function migrateHeld(): array
     {
         $ran = $this->repository->ran();
         $pending = array_diff_key($this->files(), $ran);
@@ -57,7 +88,7 @@ final readonly class PdoMigrator
      *
      * @return list<string> The migrations that were reverted
      */
-    public function rollback(int $steps = 1): array
+    private function rollbackHeld(int $steps): array
     {
         $ran = $this->repository->ran();
         if ($ran === []) {
@@ -79,7 +110,7 @@ final readonly class PdoMigrator
      *
      * @return list<string>
      */
-    public function reset(): array
+    private function resetHeld(): array
     {
         $revert = array_keys($this->repository->ran());
         rsort($revert);

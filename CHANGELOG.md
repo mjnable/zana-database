@@ -3,6 +3,30 @@
 All Zana packages share one version number and are released together. A release that did
 not change this package is not listed.
 
+## 2.39.0 — unreleased
+
+### Fixed
+
+- Two `migrate` runs on one database at the same moment are serialized (FE-85). Before, both ran each pending
+  migration: a transactional one was undone again by the second run's duplicate line in `zana_migrations`, but a
+  non-transactional one ran twice, and one of the runs reported a failure. Now `migrate`, `migrate:rollback` and
+  `reset()` take a lock on the database for the whole operation, and read what is pending only once they hold it, so a
+  run that waited finds "Nothing to migrate".
+  - MySQL and MariaDB: `GET_LOCK()`, and PostgreSQL: an advisory lock, both named after the current database and
+    held on a connection of their own, so the migrator closing its connection after a schema change (2.37) does not
+    release them. SQLite: an exclusive lock on `<database file>.migrate-lock`. An in-memory database needs none.
+  - A process that dies releases its lock with its session or its file handle.
+  - Two databases never share a lock; every run on one database does, whatever its migrations, its host spelling or
+    its engine (the 2.36 engine of the deprecated `createPdo()` takes the same lock).
+  - A lock that cannot be taken stops the run, with nothing run: there is no run without it. Releasing the lock never
+    hides a migration's own failure.
+
+### Added
+
+- `database.migrations.lock_timeout`: how many seconds a run waits for another, 60 by default. `0` does not wait: a
+  run stops at once when another holds the lock. A negative value is refused. `Migrator` takes it as its fifth
+  argument, `lockTimeout`.
+
 ## 2.37.1 — 2026-11-27
 
 ### Fixed
