@@ -33,7 +33,7 @@ use Zana\Database\Migration\Migrator;
  */
 final class DoctrineMigrationsTest extends TestCase
 {
-    private const array TABLES = ['mig_a', 'mig_b', 'mig_c', 'mig_notes', 'mig_extra', 'zana_migrations'];
+    private const array TABLES = ['mig_child', 'mig_parent', 'mig_a', 'mig_b', 'mig_c', 'mig_notes', 'mig_extra', 'zana_migrations'];
 
     /** A namespace of this test's own, so the Doctrine classes of two tests never collide. */
     private string $namespace = '';
@@ -82,6 +82,46 @@ final class DoctrineMigrationsTest extends TestCase
         $this->assertFalse($db->schema()->hasTable('mig_a'));
         $this->assertSame(['2026_01_01_000000_create_a', '2026_01_02_000000_create_b'], $migrator->migrate());
         $this->assertSame($ran, $migrator->status());
+    }
+
+    /**
+     * 2.37.1: a table made through Doctrine's schema objects is InnoDB with utf8mb4 on MySQL, as the schema builder's
+     * tables are, so its foreign keys hold, where the server defaults to MyISAM (as WAMP does).
+     */
+    #[DataProvider('drivers')]
+    public function testATableADoctrineMigrationCreatesKeepsItsForeignKeys(string $driver): void
+    {
+        $db = $this->connect($driver);
+        $dir = $this->directory();
+        $this->doctrineClass($dir, 'Version20260101000000', <<<'PHP'
+            $parent = $schema->createTable('mig_parent');
+            $parent->addColumn('id', 'integer');
+            $parent->setPrimaryKey(['id']);
+            $child = $schema->createTable('mig_child');
+            $child->addColumn('parent_id', 'integer');
+            $child->addColumn('label', 'string', ['length' => 20]);
+            $child->addForeignKeyConstraint('mig_parent', ['parent_id'], ['id'], ['onDelete' => 'CASCADE']);
+            PHP, down: "\$schema->dropTable('mig_child');\n\$schema->dropTable('mig_parent');");
+        $this->migrator($db, [$dir])->migrate();
+
+        $db->table('mig_parent')->insert(['id' => 1]);
+        $db->table('mig_child')->insert(['parent_id' => 1, 'label' => 'é ✓ 😀']);
+        $this->assertSame('é ✓ 😀', $db->table('mig_child')->value('label'), 'utf8mb4 on MySQL');
+        $db->table('mig_parent')->where('id', 1)->delete();
+        $this->assertSame(0, $db->table('mig_child')->count(), 'the foreign key cascades');
+        try {
+            $db->table('mig_child')->insert(['parent_id' => 99, 'label' => 'orphan']);
+            $this->fail('A row with no parent must be refused.');
+        } catch (\Zana\Database\DatabaseException) {
+            $this->addToAssertionCount(1);
+        }
+        if ($driver === 'mysql') {
+            $tables = $db->select("SELECT table_name AS name, engine, table_collation AS collation FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN ('mig_parent', 'mig_child') ORDER BY table_name");
+            $this->assertSame([
+                ['name' => 'mig_child', 'engine' => 'InnoDB', 'collation' => 'utf8mb4_unicode_ci'],
+                ['name' => 'mig_parent', 'engine' => 'InnoDB', 'collation' => 'utf8mb4_unicode_ci'],
+            ], array_map(static fn (array $row): array => array_change_key_case($row, CASE_LOWER), $tables));
+        }
     }
 
     public function testZanaFilesAndDoctrineClassesRunInTheOrderOfTheirDates(): void

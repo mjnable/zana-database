@@ -3,6 +3,17 @@
 All Zana packages share one version number and are released together. A release that did
 not change this package is not listed.
 
+## 2.37.1 — unreleased
+
+### Fixed
+
+- On MySQL and MariaDB, a table a Doctrine migration creates through schema objects is InnoDB with utf8mb4
+  (`utf8mb4_unicode_ci`), as the schema builder's tables always were. It took the server's default engine, so where
+  that is MyISAM, as on WAMP, its foreign keys were not enforced, its cascades did not run, and it had no
+  transactions. A MySQL connection now gives DBAL these default table options. A table created with `addSql()` still
+  takes what its SQL says. Tables created by 2.37.0 keep their engine: change one with
+  `ALTER TABLE … ENGINE=InnoDB`.
+
 ## 2.37.0 — 2026-11-24
 
 ### Added

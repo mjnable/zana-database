@@ -49,6 +49,11 @@ final class ConnectionFactory
         if ($driver === 'pgsql') {
             $params += self::pgsqlTls($config);
         }
+        if ($driver === 'mysql') {
+            // A table a Doctrine migration creates (2.37) gets what the schema builder gives its tables: InnoDB, for
+            // transactions and foreign keys, where a server defaults to MyISAM (as WAMP does), and utf8mb4.
+            $params['defaultTableOptions'] = ['engine' => 'InnoDB', 'charset' => 'utf8mb4', 'collation' => 'utf8mb4_unicode_ci'];
+        }
         if ($driver === 'sqlite') {
             self::sqliteDirectory($string('database', ':memory:'));
         }
